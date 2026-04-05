@@ -18,6 +18,7 @@ type AccountRow = {
   account_name: string;
   account_type: string;
   wallet_id: string | null;
+  display_order: number;
 };
 
 type CategoryRow = {
@@ -26,6 +27,7 @@ type CategoryRow = {
   major_category: string;
   minor_category: string;
   category_kind: string;
+  display_order: number;
 };
 
 type MerchantRow = {
@@ -91,6 +93,20 @@ export default function Page() {
 
   const [merchantMasters, setMerchantMasters] = useState<MerchantMasterRow[]>([]);
   const [newMerchantName, setNewMerchantName] = useState("");
+
+  const [editingAccountId, setEditingAccountId] = useState<string | null>(null);
+const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
+const [editingMerchantMasterId, setEditingMerchantMasterId] = useState<string | null>(null);
+
+const [editAccountName, setEditAccountName] = useState("");
+const [editAccountType, setEditAccountType] = useState("cash");
+
+const [editCategoryMajor, setEditCategoryMajor] = useState("");
+const [editCategoryMinor, setEditCategoryMinor] = useState("");
+const [editCategoryKind, setEditCategoryKind] = useState("expense_normal");
+const [editCategoryWalletType, setEditCategoryWalletType] = useState("household");
+
+const [editMerchantMasterName, setEditMerchantMasterName] = useState("");
 
   const [transactions, setTransactions] = useState<TransactionListRow[]>([]);
   const [listLoading, setListLoading] = useState(false);
@@ -197,8 +213,6 @@ export default function Page() {
       .select("id, merchant_name, display_order")
       .eq("is_active", true)
       .order("display_order", { ascending: true });
-
-      setMerchantMasters((mm as MerchantMasterRow[]) || []);
 
     if (wErr || aErr || cErr || mmErr) {
       setMessage(
@@ -789,6 +803,90 @@ const moveMerchantMaster = async (id: string, direction: "up" | "down") => {
     return;
   }
 
+  await loadData();
+};
+
+const startEditAccount = (a: AccountRow) => {
+  setEditingAccountId(a.id);
+  setEditAccountName(a.account_name);
+  setEditAccountType(a.account_type);
+};
+
+const saveEditAccount = async (id: string) => {
+  const { error } = await supabase
+    .from("accounts")
+    .update({
+      account_name: editAccountName.trim(),
+      account_type: editAccountType,
+    })
+    .eq("id", id);
+
+  if (error) {
+    setMasterMessage("支払元更新エラー: " + error.message);
+    return;
+  }
+
+  setMasterMessage("支払元を更新しました");
+  setEditingAccountId(null);
+  setEditAccountName("");
+  setEditAccountType("cash");
+  await loadData();
+};
+
+const startEditCategory = (c: CategoryRow) => {
+  setEditingCategoryId(c.id);
+  setEditCategoryWalletType(c.wallet_type || "household");
+  setEditCategoryMajor(c.major_category);
+  setEditCategoryMinor(c.minor_category);
+  setEditCategoryKind(c.category_kind);
+};
+
+const saveEditCategory = async (id: string) => {
+  const { error } = await supabase
+    .from("categories")
+    .update({
+      wallet_type: editCategoryWalletType,
+      major_category: editCategoryMajor.trim(),
+      minor_category: editCategoryMinor.trim(),
+      category_kind: editCategoryKind,
+    })
+    .eq("id", id);
+
+  if (error) {
+    setMasterMessage("費目更新エラー: " + error.message);
+    return;
+  }
+
+  setMasterMessage("費目を更新しました");
+  setEditingCategoryId(null);
+  setEditCategoryWalletType("household");
+  setEditCategoryMajor("");
+  setEditCategoryMinor("");
+  setEditCategoryKind("expense_normal");
+  await loadData();
+};
+
+const startEditMerchantMaster = (m: MerchantMasterRow) => {
+  setEditingMerchantMasterId(m.id);
+  setEditMerchantMasterName(m.merchant_name);
+};
+
+const saveEditMerchantMaster = async (id: string) => {
+  const { error } = await supabase
+    .from("merchant_masters")
+    .update({
+      merchant_name: editMerchantMasterName.trim(),
+    })
+    .eq("id", id);
+
+  if (error) {
+    setMasterMessage("支払先更新エラー: " + error.message);
+    return;
+  }
+
+  setMasterMessage("支払先候補を更新しました");
+  setEditingMerchantMasterId(null);
+  setEditMerchantMasterName("");
   await loadData();
 };
 
@@ -1585,152 +1683,192 @@ const moveMerchantMaster = async (id: string, direction: "up" | "down") => {
   <h2 style={{ marginTop: 0, fontSize: "18px" }}>現在の支払元</h2>
 
   <div style={{ display: "grid", gap: "8px" }}>
-    {accounts.map((a, idx) => (
-      <div
-        key={a.id}
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          gap: "8px",
-          borderBottom: "1px solid #eee",
-          paddingBottom: "6px",
-        }}
-      >
-        <div style={{ fontSize: "14px" }}>
-          {a.account_name} ({a.account_type})
-        </div>
+    {accounts.map((a, idx) => {
+      const isEditing = editingAccountId === a.id;
 
-        <div style={{ display: "flex", gap: "6px" }}>
-          <button
-            onClick={async () => await moveAccount(a.id, "up")}
-            disabled={idx === 0}
-            style={{ padding: "6px 10px", borderRadius: "6px", border: "none" }}
-          >
-            ↑
-          </button>
-          <button
-            onClick={async () => await moveAccount(a.id, "down")}
-            disabled={idx === accounts.length - 1}
-            style={{ padding: "6px 10px", borderRadius: "6px", border: "none" }}
-          >
-            ↓
-          </button>
-          <button
-            onClick={async () => {
-              await deleteAccount(a.id, a.account_name);
-            }}
-            style={{
-              padding: "6px 10px",
-              background: "#dc2626",
-              color: "#fff",
-              border: "none",
-              borderRadius: "6px",
-              whiteSpace: "nowrap",
-            }}
-          >
-            削除
-          </button>
+      return (
+        <div
+          key={a.id}
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: "8px",
+            borderBottom: "1px solid #eee",
+            paddingBottom: "6px",
+          }}
+        >
+          <div style={{ fontSize: "14px", flex: 1 }}>
+            {isEditing ? (
+              <div style={{ display: "grid", gap: "6px" }}>
+                <input
+                  value={editAccountName}
+                  onChange={(e) => setEditAccountName(e.target.value)}
+                  style={{ width: "100%", padding: "6px" }}
+                />
+                <select
+                  value={editAccountType}
+                  onChange={(e) => setEditAccountType(e.target.value)}
+                  style={{ width: "100%", padding: "6px" }}
+                >
+                  <option value="cash">cash</option>
+                  <option value="bank">bank</option>
+                  <option value="credit_card">credit_card</option>
+                  <option value="emoney">emoney</option>
+                  <option value="prepaid">prepaid</option>
+                </select>
+              </div>
+            ) : (
+              `${a.account_name} (${a.account_type})`
+            )}
+          </div>
+
+          <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+            {isEditing ? (
+              <>
+                <button onClick={async () => await saveEditAccount(a.id)}>保存</button>
+                <button onClick={() => setEditingAccountId(null)}>戻す</button>
+              </>
+            ) : (
+              <button onClick={() => startEditAccount(a)}>編集</button>
+            )}
+
+            <button
+              onClick={async () => await moveAccount(a.id, "up")}
+              disabled={idx === 0}
+            >
+              ↑
+            </button>
+            <button
+              onClick={async () => await moveAccount(a.id, "down")}
+              disabled={idx === accounts.length - 1}
+            >
+              ↓
+            </button>
+            <button
+              onClick={async () => {
+                await deleteAccount(a.id, a.account_name);
+              }}
+              style={{
+                background: "#dc2626",
+                color: "#fff",
+                border: "none",
+                borderRadius: "6px",
+                padding: "6px 10px",
+              }}
+            >
+              削除
+            </button>
+          </div>
         </div>
-      </div>
-    ))}
+      );
+    })}
   </div>
 </div>
 
           <div
-            style={{
-              border: "1px solid #ddd",
-              borderRadius: "8px",
-              padding: "12px",
-            }}
-          >
-            <h2 style={{ marginTop: 0, fontSize: "18px" }}>現在の費目</h2>
-
-            <div style={{ display: "grid", gap: "8px" }}>
-              {categories.map((c, idx) => (
-                <div
-                  key={c.id}
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    gap: "8px",
-                    borderBottom: "1px solid #eee",
-                    paddingBottom: "6px",
-                  }}
-                >
-                  <div style={{ fontSize: "14px" }}>
-                    [{c.wallet_type}] {c.major_category} / {c.minor_category}
-                  </div>
-
-                  <div style={{ display: "flex", gap: "6px" }}>
-                    <button
-                      onClick={async () => await moveCategory(c.id, "up")}
-                      disabled={idx === 0}
-                      style={{ padding: "6px 10px", borderRadius: "6px", border: "none" }}
-                    >
-                      ↑
-                    </button>
-                    <button
-                      onClick={async () => await moveCategory(c.id, "down")}
-                      disabled={idx === categories.length - 1}
-                      style={{ padding: "6px 10px", borderRadius: "6px", border: "none" }}
-          >
-            ↓
-          </button>
-          <button
-            onClick={async () => {
-              await deleteCategory(c.id, c.major_category, c.minor_category);
-            }}
-            style={{
-              padding: "6px 10px",
-              background: "#dc2626",
-              color: "#fff",
-              border: "none",
-              borderRadius: "6px",
-              whiteSpace: "nowrap",
-            }}
-          >
-            削除
-          </button>
-        </div>
-      </div>
-    ))}
-  </div>
-</div>
-
-<div
   style={{
     border: "1px solid #ddd",
     borderRadius: "8px",
     padding: "12px",
   }}
 >
-  <h2 style={{ marginTop: 0, fontSize: "18px" }}>支払先候補追加</h2>
+  <h2 style={{ marginTop: 0, fontSize: "18px" }}>現在の費目</h2>
 
   <div style={{ display: "grid", gap: "8px" }}>
-    <div>
-      <div style={{ marginBottom: "4px" }}>支払先名</div>
-      <input
-        value={newMerchantName}
-        onChange={(e) => setNewMerchantName(e.target.value)}
-        style={{ width: "100%", padding: "8px" }}
-        placeholder="例: 西友 / セブンイレブン / ENEOS"
-      />
-    </div>
+    {categories.map((c, idx) => {
+      const isEditing = editingCategoryId === c.id;
 
-    <button
-      onClick={addMerchantMaster}
-      style={{
-        padding: "10px",
-        background: "#111827",
-        color: "#fff",
-        border: "none",
-        borderRadius: "8px",
-      }}
-    >
-      支払先候補を追加
-    </button>
+      return (
+        <div
+          key={c.id}
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: "8px",
+            borderBottom: "1px solid #eee",
+            paddingBottom: "6px",
+          }}
+        >
+          <div style={{ fontSize: "14px", flex: 1 }}>
+            {isEditing ? (
+              <div style={{ display: "grid", gap: "6px" }}>
+                <select
+                  value={editCategoryWalletType}
+                  onChange={(e) => setEditCategoryWalletType(e.target.value)}
+                  style={{ width: "100%", padding: "6px" }}
+                >
+                  <option value="household">household</option>
+                  <option value="allowance">allowance</option>
+                </select>
+                <input
+                  value={editCategoryMajor}
+                  onChange={(e) => setEditCategoryMajor(e.target.value)}
+                  style={{ width: "100%", padding: "6px" }}
+                />
+                <input
+                  value={editCategoryMinor}
+                  onChange={(e) => setEditCategoryMinor(e.target.value)}
+                  style={{ width: "100%", padding: "6px" }}
+                />
+                <select
+                  value={editCategoryKind}
+                  onChange={(e) => setEditCategoryKind(e.target.value)}
+                  style={{ width: "100%", padding: "6px" }}
+                >
+                  <option value="expense_normal">expense_normal</option>
+                  <option value="expense_special">expense_special</option>
+                  <option value="income">income</option>
+                  <option value="transfer">transfer</option>
+                  <option value="charge">charge</option>
+                </select>
+              </div>
+            ) : (
+              `[${c.wallet_type}] ${c.major_category} / ${c.minor_category}`
+            )}
+          </div>
+
+          <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+            {isEditing ? (
+              <>
+                <button onClick={async () => await saveEditCategory(c.id)}>保存</button>
+                <button onClick={() => setEditingCategoryId(null)}>戻す</button>
+              </>
+            ) : (
+              <button onClick={() => startEditCategory(c)}>編集</button>
+            )}
+
+            <button
+              onClick={async () => await moveCategory(c.id, "up")}
+              disabled={idx === 0}
+            >
+              ↑
+            </button>
+            <button
+              onClick={async () => await moveCategory(c.id, "down")}
+              disabled={idx === categories.length - 1}
+            >
+              ↓
+            </button>
+            <button
+              onClick={async () => {
+                await deleteCategory(c.id, c.major_category, c.minor_category);
+              }}
+              style={{
+                background: "#dc2626",
+                color: "#fff",
+                border: "none",
+                borderRadius: "6px",
+                padding: "6px 10px",
+              }}
+            >
+              削除
+            </button>
+          </div>
+        </div>
+      );
+    })}
   </div>
 </div>
 
@@ -1744,53 +1882,73 @@ const moveMerchantMaster = async (id: string, direction: "up" | "down") => {
   <h2 style={{ marginTop: 0, fontSize: "18px" }}>現在の支払先候補</h2>
 
   <div style={{ display: "grid", gap: "8px" }}>
-    {merchantMasters.map((m, idx) => (
-      <div
-        key={m.id}
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          gap: "8px",
-          borderBottom: "1px solid #eee",
-          paddingBottom: "6px",
-        }}
-      >
-        <div style={{ fontSize: "14px" }}>{m.merchant_name}</div>
+    {merchantMasters.map((m, idx) => {
+      const isEditing = editingMerchantMasterId === m.id;
 
-        <div style={{ display: "flex", gap: "6px" }}>
-          <button
-            onClick={async () => await moveMerchantMaster(m.id, "up")}
-            disabled={idx === 0}
-            style={{ padding: "6px 10px", borderRadius: "6px", border: "none" }}
-          >
-            ↑
-          </button>
-          <button
-            onClick={async () => await moveMerchantMaster(m.id, "down")}
-            disabled={idx === merchantMasters.length - 1}
-            style={{ padding: "6px 10px", borderRadius: "6px", border: "none" }}
-          >
-            ↓
-          </button>
-          <button
-            onClick={async () => {
-              await deleteMerchantMaster(m.id, m.merchant_name);
-            }}
-            style={{
-              padding: "6px 10px",
-              background: "#dc2626",
-              color: "#fff",
-              border: "none",
-              borderRadius: "6px",
-              whiteSpace: "nowrap",
-            }}
-          >
-            削除
-          </button>
+      return (
+        <div
+          key={m.id}
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: "8px",
+            borderBottom: "1px solid #eee",
+            paddingBottom: "6px",
+          }}
+        >
+          <div style={{ fontSize: "14px", flex: 1 }}>
+            {isEditing ? (
+              <input
+                value={editMerchantMasterName}
+                onChange={(e) => setEditMerchantMasterName(e.target.value)}
+                style={{ width: "100%", padding: "6px" }}
+              />
+            ) : (
+              m.merchant_name
+            )}
+          </div>
+
+          <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+            {isEditing ? (
+              <>
+                <button onClick={async () => await saveEditMerchantMaster(m.id)}>保存</button>
+                <button onClick={() => setEditingMerchantMasterId(null)}>戻す</button>
+              </>
+            ) : (
+              <button onClick={() => startEditMerchantMaster(m)}>編集</button>
+            )}
+
+            <button
+              onClick={async () => await moveMerchantMaster(m.id, "up")}
+              disabled={idx === 0}
+            >
+              ↑
+            </button>
+            <button
+              onClick={async () => await moveMerchantMaster(m.id, "down")}
+              disabled={idx === merchantMasters.length - 1}
+            >
+              ↓
+            </button>
+            <button
+              onClick={async () => {
+                await deleteMerchantMaster(m.id, m.merchant_name);
+              }}
+              style={{
+                background: "#dc2626",
+                color: "#fff",
+                border: "none",
+                borderRadius: "6px",
+                padding: "6px 10px",
+              }}
+            >
+              削除
+            </button>
+          </div>
         </div>
-      </div>
-    ))}
+      );
+    })}
   </div>
 </div>
 
