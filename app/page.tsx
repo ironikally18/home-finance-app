@@ -68,6 +68,12 @@ type TransactionListRow = {
 
 type ScreenMode = "entry" | "list" | "masters";
 
+type MerchantMasterRow = {
+  id: string;
+  merchant_name: string;
+  display_order: number;
+};
+
 export default function Page() {
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -82,6 +88,9 @@ export default function Page() {
   const [accounts, setAccounts] = useState<AccountRow[]>([]);
   const [categories, setCategories] = useState<CategoryRow[]>([]);
   const [merchantCandidates, setMerchantCandidates] = useState<string[]>([]);
+
+  const [merchantMasters, setMerchantMasters] = useState<MerchantMasterRow[]>([]);
+  const [newMerchantName, setNewMerchantName] = useState("");
 
   const [transactions, setTransactions] = useState<TransactionListRow[]>([]);
   const [listLoading, setListLoading] = useState(false);
@@ -175,25 +184,26 @@ export default function Page() {
 
     const { data: a, error: aErr } = await supabase
       .from("accounts")
-      .select("id, account_name, account_type, wallet_id")
+      .select("id, account_name, account_type, wallet_id, display_order")
       .order("display_order", { ascending: true });
 
     const { data: c, error: cErr } = await supabase
       .from("categories")
-      .select("id, wallet_type, major_category, minor_category, category_kind")
+      .select("id, wallet_type, major_category, minor_category, category_kind, display_order")
       .order("display_order", { ascending: true });
 
-    const { data: m, error: mErr } = await supabase
-      .from("transaction_records")
-      .select("merchant_name")
-      .not("merchant_name", "is", null)
-      .order("merchant_name", { ascending: true })
-      .limit(300);
+    const { data: mm, error: mmErr } = await supabase
+      .from("merchant_masters")
+      .select("id, merchant_name, display_order")
+      .eq("is_active", true)
+      .order("display_order", { ascending: true });
 
-    if (wErr || aErr || cErr || mErr) {
+      setMerchantMasters((mm as MerchantMasterRow[]) || []);
+
+    if (wErr || aErr || cErr || mmErr) {
       setMessage(
         "読込エラー: " +
-          [wErr?.message, aErr?.message, cErr?.message, mErr?.message]
+          [wErr?.message, aErr?.message, cErr?.message, mmErr?.message]
             .filter(Boolean)
             .join(" / ")
       );
@@ -203,20 +213,13 @@ export default function Page() {
     const walletsData = (w as WalletRow[]) || [];
     const accountsData = (a as AccountRow[]) || [];
     const categoriesData = (c as CategoryRow[]) || [];
-    const merchantsData = (m as MerchantRow[]) || [];
-
-    const merchantList = Array.from(
-      new Set(
-        merchantsData
-          .map((x) => (x.merchant_name || "").trim())
-          .filter((x) => x !== "")
-      )
-    );
+    const merchantMasterData = (mm as MerchantMasterRow[]) || [];
 
     setWallets(walletsData);
     setAccounts(accountsData);
     setCategories(categoriesData);
-    setMerchantCandidates(merchantList);
+    setMerchantMasters(merchantMasterData);
+    setMerchantCandidates(merchantMasterData.map((x) => x.merchant_name));
 
     if (walletsData.length > 0 && !walletId) {
       setWalletId(walletsData[0].id);
@@ -630,6 +633,166 @@ export default function Page() {
     setMessage("削除しました");
     await loadTransactions();
   };
+
+  const moveAccount = async (id: string, direction: "up" | "down") => {
+    const index = accounts.findIndex((x) => x.id === id);
+    if (index < 0) return;
+
+    const targetIndex = direction === "up" ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= accounts.length) return;
+
+    const current = accounts[index] as AccountRow & { display_order?: number };
+    const target = accounts[targetIndex] as AccountRow & { display_order?: number };
+
+    const currentOrder = current.display_order ?? index + 1;
+    const targetOrder = target.display_order ?? targetIndex + 1;
+
+    const { error: e1 } = await supabase
+      .from("accounts")
+      .update({ display_order: targetOrder })
+      .eq("id", current.id);
+
+    if (e1) {
+      setMasterMessage("支払元並び替えエラー: " + e1.message);
+      return;
+    }
+
+    const { error: e2 } = await supabase
+      .from("accounts")
+      .update({ display_order: currentOrder })
+      .eq("id", target.id);
+
+    if (e2) {
+      setMasterMessage("支払元並び替えエラー: " + e2.message);
+      return;
+    }
+
+    await loadData();
+  };
+
+  const moveCategory = async (id: string, direction: "up" | "down") => {
+    const index = categories.findIndex((x) => x.id === id);
+    if (index < 0) return;
+
+    const targetIndex = direction === "up" ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= categories.length) return;
+
+    const current = categories[index] as CategoryRow & { display_order?: number };
+    const target = categories[targetIndex] as CategoryRow & { display_order?: number };
+
+    const currentOrder = current.display_order ?? index + 1;
+    const targetOrder = target.display_order ?? targetIndex + 1;
+
+    const { error: e1 } = await supabase
+      .from("categories")
+      .update({ display_order: targetOrder })
+      .eq("id", current.id);
+
+    if (e1) {
+      setMasterMessage("費目並び替えエラー: " + e1.message);
+      return;
+    }
+
+    const { error: e2 } = await supabase
+      .from("categories")
+      .update({ display_order: currentOrder })
+      .eq("id", target.id);
+
+    if (e2) {
+      setMasterMessage("費目並び替えエラー: " + e2.message);
+      return;
+    }
+
+    await loadData();
+  };
+
+  const addMerchantMaster = async () => {
+  setMasterMessage("");
+
+  if (!user) {
+    setMasterMessage("ログインしてください");
+    return;
+  }
+
+  if (!newMerchantName.trim()) {
+    setMasterMessage("支払先名を入力してください");
+    return;
+  }
+
+  const maxOrder =
+    merchantMasters.length > 0
+      ? Math.max(...merchantMasters.map((x) => x.display_order ?? 0))
+      : 0;
+
+  const { error } = await supabase.from("merchant_masters").insert({
+    user_id: user.id,
+    merchant_name: newMerchantName.trim(),
+    is_active: true,
+    display_order: maxOrder + 1,
+  });
+
+  if (error) {
+    setMasterMessage("支払先追加エラー: " + error.message);
+    return;
+  }
+
+  setMasterMessage("支払先候補を追加しました");
+  setNewMerchantName("");
+  await loadData();
+};
+
+const deleteMerchantMaster = async (id: string, name: string) => {
+  const ok = window.confirm(`支払先候補「${name}」を削除しますか？`);
+  if (!ok) return;
+
+  const { error } = await supabase
+    .from("merchant_masters")
+    .delete()
+    .eq("id", id);
+
+  if (error) {
+    setMasterMessage("支払先削除エラー: " + error.message);
+    return;
+  }
+
+  setMasterMessage("支払先候補を削除しました");
+  await loadData();
+};
+
+const moveMerchantMaster = async (id: string, direction: "up" | "down") => {
+  const index = merchantMasters.findIndex((x) => x.id === id);
+  if (index < 0) return;
+
+  const targetIndex = direction === "up" ? index - 1 : index + 1;
+  if (targetIndex < 0 || targetIndex >= merchantMasters.length) return;
+
+  const current = merchantMasters[index];
+  const target = merchantMasters[targetIndex];
+
+  const { error: e1 } = await supabase
+    .from("merchant_masters")
+    .update({ display_order: target.display_order })
+    .eq("id", current.id);
+
+  if (e1) {
+    setMasterMessage("支払先並び替えエラー: " + e1.message);
+    return;
+  }
+
+  const { error: e2 } = await supabase
+    .from("merchant_masters")
+    .update({ display_order: current.display_order })
+    .eq("id", target.id);
+
+  if (e2) {
+    setMasterMessage("支払先並び替えエラー: " + e2.message);
+    return;
+  }
+
+  await loadData();
+};
+
+
 
   if (authLoading) {
     return (
@@ -1413,50 +1576,66 @@ export default function Page() {
           </div>
 
           <div
+  style={{
+    border: "1px solid #ddd",
+    borderRadius: "8px",
+    padding: "12px",
+  }}
+>
+  <h2 style={{ marginTop: 0, fontSize: "18px" }}>現在の支払元</h2>
+
+  <div style={{ display: "grid", gap: "8px" }}>
+    {accounts.map((a, idx) => (
+      <div
+        key={a.id}
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: "8px",
+          borderBottom: "1px solid #eee",
+          paddingBottom: "6px",
+        }}
+      >
+        <div style={{ fontSize: "14px" }}>
+          {a.account_name} ({a.account_type})
+        </div>
+
+        <div style={{ display: "flex", gap: "6px" }}>
+          <button
+            onClick={async () => await moveAccount(a.id, "up")}
+            disabled={idx === 0}
+            style={{ padding: "6px 10px", borderRadius: "6px", border: "none" }}
+          >
+            ↑
+          </button>
+          <button
+            onClick={async () => await moveAccount(a.id, "down")}
+            disabled={idx === accounts.length - 1}
+            style={{ padding: "6px 10px", borderRadius: "6px", border: "none" }}
+          >
+            ↓
+          </button>
+          <button
+            onClick={async () => {
+              await deleteAccount(a.id, a.account_name);
+            }}
             style={{
-              border: "1px solid #ddd",
-              borderRadius: "8px",
-              padding: "12px",
+              padding: "6px 10px",
+              background: "#dc2626",
+              color: "#fff",
+              border: "none",
+              borderRadius: "6px",
+              whiteSpace: "nowrap",
             }}
           >
-            <h2 style={{ marginTop: 0, fontSize: "18px" }}>現在の支払元</h2>
-
-            <div style={{ display: "grid", gap: "8px" }}>
-              {accounts.map((a) => (
-                <div
-                  key={a.id}
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    gap: "8px",
-                    borderBottom: "1px solid #eee",
-                    paddingBottom: "6px",
-                  }}
-                >
-                  <div style={{ fontSize: "14px" }}>
-                    {a.account_name} ({a.account_type})
-                  </div>
-
-                  <button
-                    onClick={async () => {
-                      await deleteAccount(a.id, a.account_name);
-                    }}
-                    style={{
-                      padding: "6px 10px",
-                      background: "#dc2626",
-                      color: "#fff",
-                      border: "none",
-                      borderRadius: "6px",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    削除
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
+            削除
+          </button>
+        </div>
+      </div>
+    ))}
+  </div>
+</div>
 
           <div
             style={{
@@ -1468,7 +1647,7 @@ export default function Page() {
             <h2 style={{ marginTop: 0, fontSize: "18px" }}>現在の費目</h2>
 
             <div style={{ display: "grid", gap: "8px" }}>
-              {categories.map((c) => (
+              {categories.map((c, idx) => (
                 <div
                   key={c.id}
                   style={{
@@ -1484,25 +1663,136 @@ export default function Page() {
                     [{c.wallet_type}] {c.major_category} / {c.minor_category}
                   </div>
 
-                  <button
-                    onClick={async () => {
-                      await deleteCategory(c.id, c.major_category, c.minor_category);
-                    }}
-                    style={{
-                      padding: "6px 10px",
-                      background: "#dc2626",
-                      color: "#fff",
-                      border: "none",
-                      borderRadius: "6px",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    削除
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
+                  <div style={{ display: "flex", gap: "6px" }}>
+                    <button
+                      onClick={async () => await moveCategory(c.id, "up")}
+                      disabled={idx === 0}
+                      style={{ padding: "6px 10px", borderRadius: "6px", border: "none" }}
+                    >
+                      ↑
+                    </button>
+                    <button
+                      onClick={async () => await moveCategory(c.id, "down")}
+                      disabled={idx === categories.length - 1}
+                      style={{ padding: "6px 10px", borderRadius: "6px", border: "none" }}
+          >
+            ↓
+          </button>
+          <button
+            onClick={async () => {
+              await deleteCategory(c.id, c.major_category, c.minor_category);
+            }}
+            style={{
+              padding: "6px 10px",
+              background: "#dc2626",
+              color: "#fff",
+              border: "none",
+              borderRadius: "6px",
+              whiteSpace: "nowrap",
+            }}
+          >
+            削除
+          </button>
+        </div>
+      </div>
+    ))}
+  </div>
+</div>
+
+<div
+  style={{
+    border: "1px solid #ddd",
+    borderRadius: "8px",
+    padding: "12px",
+  }}
+>
+  <h2 style={{ marginTop: 0, fontSize: "18px" }}>支払先候補追加</h2>
+
+  <div style={{ display: "grid", gap: "8px" }}>
+    <div>
+      <div style={{ marginBottom: "4px" }}>支払先名</div>
+      <input
+        value={newMerchantName}
+        onChange={(e) => setNewMerchantName(e.target.value)}
+        style={{ width: "100%", padding: "8px" }}
+        placeholder="例: 西友 / セブンイレブン / ENEOS"
+      />
+    </div>
+
+    <button
+      onClick={addMerchantMaster}
+      style={{
+        padding: "10px",
+        background: "#111827",
+        color: "#fff",
+        border: "none",
+        borderRadius: "8px",
+      }}
+    >
+      支払先候補を追加
+    </button>
+  </div>
+</div>
+
+<div
+  style={{
+    border: "1px solid #ddd",
+    borderRadius: "8px",
+    padding: "12px",
+  }}
+>
+  <h2 style={{ marginTop: 0, fontSize: "18px" }}>現在の支払先候補</h2>
+
+  <div style={{ display: "grid", gap: "8px" }}>
+    {merchantMasters.map((m, idx) => (
+      <div
+        key={m.id}
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: "8px",
+          borderBottom: "1px solid #eee",
+          paddingBottom: "6px",
+        }}
+      >
+        <div style={{ fontSize: "14px" }}>{m.merchant_name}</div>
+
+        <div style={{ display: "flex", gap: "6px" }}>
+          <button
+            onClick={async () => await moveMerchantMaster(m.id, "up")}
+            disabled={idx === 0}
+            style={{ padding: "6px 10px", borderRadius: "6px", border: "none" }}
+          >
+            ↑
+          </button>
+          <button
+            onClick={async () => await moveMerchantMaster(m.id, "down")}
+            disabled={idx === merchantMasters.length - 1}
+            style={{ padding: "6px 10px", borderRadius: "6px", border: "none" }}
+          >
+            ↓
+          </button>
+          <button
+            onClick={async () => {
+              await deleteMerchantMaster(m.id, m.merchant_name);
+            }}
+            style={{
+              padding: "6px 10px",
+              background: "#dc2626",
+              color: "#fff",
+              border: "none",
+              borderRadius: "6px",
+              whiteSpace: "nowrap",
+            }}
+          >
+            削除
+          </button>
+        </div>
+      </div>
+    ))}
+  </div>
+</div>
 
           <div>{masterMessage}</div>
         </div>
