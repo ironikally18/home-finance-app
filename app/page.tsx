@@ -518,6 +518,46 @@ export default function Page() {
     await loadData();
   };
 
+  const deleteAccount = async (id: string, name: string) => {
+    const ok = window.confirm(`支払元「${name}」を削除しますか？`);
+    if (!ok) return;
+
+    const { error } = await supabase
+    .from("accounts")
+    .delete()
+    .eq("id", id);
+
+  if (error) {
+    setMasterMessage("支払元削除エラー: " + error.message);
+    return;
+  }
+
+  setMasterMessage("支払元を削除しました");
+  await loadData();
+};
+
+  const deleteCategory = async (
+    id: string,
+    major: string,
+    minor: string
+  ) => {
+    const ok = window.confirm(`費目「${major} / ${minor}」を削除しますか？`);
+    if (!ok) return;
+
+    const { error } = await supabase
+      .from("categories")
+      .delete()
+      .eq("id", id);
+
+    if (error) {
+      setMasterMessage("費目削除エラー: " + error.message);
+      return;
+    }
+
+    setMasterMessage("費目を削除しました");
+    await loadData();
+  };
+
   const startEditTransaction = (t: TransactionListRow) => {
     setEditingId(t.id);
     setEditDate(t.txn_date || "");
@@ -1380,10 +1420,39 @@ export default function Page() {
             }}
           >
             <h2 style={{ marginTop: 0, fontSize: "18px" }}>現在の支払元</h2>
-            <div style={{ fontSize: "14px", lineHeight: 1.7 }}>
+
+            <div style={{ display: "grid", gap: "8px" }}>
               {accounts.map((a) => (
-                <div key={a.id}>
-                  ・{a.account_name} ({a.account_type})
+                <div
+                  key={a.id}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: "8px",
+                    borderBottom: "1px solid #eee",
+                    paddingBottom: "6px",
+                  }}
+                >
+                  <div style={{ fontSize: "14px" }}>
+                    {a.account_name} ({a.account_type})
+                  </div>
+
+                  <button
+                    onClick={async () => {
+                      await deleteAccount(a.id, a.account_name);
+                    }}
+                    style={{
+                      padding: "6px 10px",
+                      background: "#dc2626",
+                      color: "#fff",
+                      border: "none",
+                      borderRadius: "6px",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    削除
+                  </button>
                 </div>
               ))}
             </div>
@@ -1397,10 +1466,39 @@ export default function Page() {
             }}
           >
             <h2 style={{ marginTop: 0, fontSize: "18px" }}>現在の費目</h2>
-            <div style={{ fontSize: "14px", lineHeight: 1.7 }}>
+
+            <div style={{ display: "grid", gap: "8px" }}>
               {categories.map((c) => (
-                <div key={c.id}>
-                  ・[{c.wallet_type}] {c.major_category} / {c.minor_category}
+                <div
+                  key={c.id}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: "8px",
+                    borderBottom: "1px solid #eee",
+                    paddingBottom: "6px",
+                  }}
+                >
+                  <div style={{ fontSize: "14px" }}>
+                    [{c.wallet_type}] {c.major_category} / {c.minor_category}
+                  </div>
+
+                  <button
+                    onClick={async () => {
+                      await deleteCategory(c.id, c.major_category, c.minor_category);
+                    }}
+                    style={{
+                      padding: "6px 10px",
+                      background: "#dc2626",
+                      color: "#fff",
+                      border: "none",
+                      borderRadius: "6px",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    削除
+                  </button>
                 </div>
               ))}
             </div>
