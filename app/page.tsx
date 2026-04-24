@@ -278,9 +278,12 @@ const [editMerchantMasterName, setEditMerchantMasterName] = useState("");
 
     if (listMonth) {
       const from = `${listMonth}-01`;
-      const dt = new Date(`${listMonth}-01T00:00:00`);
-      const nextMonth = new Date(dt.getFullYear(), dt.getMonth() + 1, 1);
-      const to = nextMonth.toISOString().slice(0, 10);
+
+      const [y, m] = listMonth.split("-").map(Number);
+      const nextY = m === 12 ? y + 1 : y;
+      const nextM = m === 12 ? 1 : m + 1;
+
+      const to = `${nextY}-${String(nextM).padStart(2, "0")}-01`;
 
       query = query.gte("txn_date", from).lt("txn_date", to);
     }
@@ -1235,7 +1238,17 @@ const saveEditMerchantMaster = async (id: string) => {
       )}
 
       {screenMode === "list" && (
-  <div style={{ display: "grid", gap: "12px" }}>
+        <div
+          style={{
+            display: "grid",
+            gap: "12px",
+            background: "#111827",
+            color: "#f9fafb",
+            minHeight: "100vh",
+            padding: "8px",
+            borderRadius: "8px",
+          }}
+        >
     <div
       style={{
         display: "grid",
@@ -1333,10 +1346,11 @@ const saveEditMerchantMaster = async (id: string) => {
             width: "100%",
             minWidth: "980px",
             background: "#111827",
+            color: "#f9fafb",
           }}
         >
           <thead>
-            <tr style={{ background: "#f3f4f6" }}>
+            <tr style={{ background: "#1f2937" }}>
               <th style={th}>日付</th>
               <th style={th}>金額</th>
               <th style={th}>費目</th>
