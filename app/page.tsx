@@ -152,6 +152,8 @@ const [editMerchantMasterName, setEditMerchantMasterName] = useState("");
   const [newMinorCategory, setNewMinorCategory] = useState("");
   const [newCategoryKind, setNewCategoryKind] = useState("expense_normal");
 
+  const [keepPreviousInput, setKeepPreviousInput] = useState(true);
+
   useEffect(() => {
     setDate(new Date().toISOString().slice(0, 10));
 
@@ -451,10 +453,13 @@ const [editMerchantMasterName, setEditMerchantMasterName] = useState("");
     }
 
     setAmount("");
-    setCategoryId("");
-    setAccountId("");
-    setMerchantName("");
     setMemo("");
+
+    if (!keepPreviousInput) {
+      setCategoryId("");
+      setAccountId("");
+      setMerchantName("");
+    }
     setTaxMode("none");
     setTaxAmount("");
     setReceiptGroupId("");
@@ -1214,6 +1219,15 @@ const saveEditMerchantMaster = async (id: string) => {
               </div>
             )}
           </div>
+
+          <label style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+            <input
+              type="checkbox"
+              checked={keepPreviousInput}
+              onChange={(e) => setKeepPreviousInput(e.target.checked)}
+            />
+            前回の費目・支払元・支払先を残す
+          </label>
 
           <button
             onClick={saveExpense}
