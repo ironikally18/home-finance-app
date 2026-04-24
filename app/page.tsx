@@ -950,13 +950,18 @@ const saveEditMerchantMaster = async (id: string) => {
   const th: React.CSSProperties = {
     padding: "8px",
     textAlign: "left",
-    borderBottom: "1px solid #ccc",
+    borderBottom: "1px solid #374151",
     whiteSpace: "nowrap",
+    color: "#f9fafb",
+    background: "#1f2937",
   };
 
   const td: React.CSSProperties = {
     padding: "8px",
     whiteSpace: "nowrap",
+    color: "#f9fafb",
+    background: "#111827",
+    borderBottom: "1px solid #374151",
   };
 
   return (
@@ -1235,10 +1240,11 @@ const saveEditMerchantMaster = async (id: string) => {
       style={{
         display: "grid",
         gap: "10px",
-        border: "1px solid #ddd",
+        border: "1px solid #374151",
         borderRadius: "8px",
         padding: "12px",
-        background: "#fff",
+        background: "#1f2937",
+        color: "#f9fafb",
       }}
     >
       <div style={{ fontWeight: "bold" }}>一覧条件</div>
@@ -1313,13 +1319,20 @@ const saveEditMerchantMaster = async (id: string) => {
     )}
 
     {!listLoading && transactions.length > 0 && (
-      <div style={{ overflowX: "auto" }}>
+      <div
+        style={{
+          overflowX: "auto",
+          background: "#111827",
+          borderRadius: "8px",
+          border: "1px solid #374151",
+        }}
+      >
         <table
           style={{
             borderCollapse: "collapse",
             width: "100%",
             minWidth: "980px",
-            background: "#fff",
+            background: "#111827",
           }}
         >
           <thead>
@@ -1589,10 +1602,11 @@ const saveEditMerchantMaster = async (id: string) => {
               <button
                 onClick={addAccount}
                 style={{
-                  padding: "10px",
+                  width: "100%",
+                  padding: "8px",
                   background: "#111827",
-                  color: "#fff",
-                  border: "none",
+                  color: "#f9fafb",
+                  border: "1px solid #374151",
                   borderRadius: "8px",
                 }}
               >
