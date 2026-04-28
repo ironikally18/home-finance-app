@@ -1047,6 +1047,22 @@ const saveEditMerchantMaster = async (id: string) => {
         >
           項目管理
         </button>
+        <div style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
+          <a href="/graph" style={{ flex: 1 }}>
+            <button
+              style={{
+                width: "100%",
+                padding: "10px",
+                background: "#2563eb",
+                color: "#fff",
+                border: "none",
+                borderRadius: "8px",
+              }}
+            >
+              📊 グラフを見る
+            </button>
+          </a>
+        </div>
       </div>
 
       {screenMode === "entry" && (
