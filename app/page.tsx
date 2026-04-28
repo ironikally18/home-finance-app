@@ -2013,6 +2013,48 @@ const saveEditMerchantMaster = async (id: string) => {
           <div>{masterMessage}</div>
         </div>
       )}
+      <BottomNav />
+      paddingBottom: "88px",
     </div>
+  );
+}
+function BottomNav() {
+  return (
+    <div
+      style={{
+        position: "fixed",
+        left: 0,
+        right: 0,
+        bottom: 0,
+        background: "#020617",
+        borderTop: "1px solid #374151",
+        display: "grid",
+        gridTemplateColumns: "repeat(4, 1fr)",
+        padding: "8px",
+        zIndex: 50,
+      }}
+    >
+      <Nav href="/" label="入力" />
+      <Nav href="/summary" label="集計" />
+      <Nav href="/graph" label="グラフ" />
+      <Nav href="/kids" label="子供" />
+    </div>
+  );
+}
+
+function Nav({ href, label }: { href: string; label: string }) {
+  return (
+    <a
+      href={href}
+      style={{
+        textAlign: "center",
+        color: "#f9fafb",
+        textDecoration: "none",
+        fontSize: "13px",
+        padding: "8px 4px",
+      }}
+    >
+      {label}
+    </a>
   );
 }
