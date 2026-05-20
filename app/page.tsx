@@ -2037,6 +2037,7 @@ function BottomNav() {
       <Nav href="/" label="入力" />
       <Nav href="/summary" label="集計" />
       <Nav href="/graph" label="グラフ" />
+      <Nav href="/calendar" label="カレンダー" />
       <Nav href="/kids" label="子供" />
     </div>
   );
