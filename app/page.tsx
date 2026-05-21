@@ -49,23 +49,23 @@ type TransactionListRow = {
   receipt_group_id: string | null;
   receipt_line_no: number | null;
   categories:
-    | {
-        major_category: string;
-        minor_category: string;
-      }
-    | {
-        major_category: string;
-        minor_category: string;
-      }[]
-    | null;
+  | {
+    major_category: string;
+    minor_category: string;
+  }
+  | {
+    major_category: string;
+    minor_category: string;
+  }[]
+  | null;
   accounts:
-    | {
-        account_name: string;
-      }
-    | {
-        account_name: string;
-      }[]
-    | null;
+  | {
+    account_name: string;
+  }
+  | {
+    account_name: string;
+  }[]
+  | null;
 };
 
 type ScreenMode = "entry" | "list" | "masters";
@@ -95,18 +95,18 @@ export default function Page() {
   const [newMerchantName, setNewMerchantName] = useState("");
 
   const [editingAccountId, setEditingAccountId] = useState<string | null>(null);
-const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
-const [editingMerchantMasterId, setEditingMerchantMasterId] = useState<string | null>(null);
+  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
+  const [editingMerchantMasterId, setEditingMerchantMasterId] = useState<string | null>(null);
 
-const [editAccountName, setEditAccountName] = useState("");
-const [editAccountType, setEditAccountType] = useState("cash");
+  const [editAccountName, setEditAccountName] = useState("");
+  const [editAccountType, setEditAccountType] = useState("cash");
 
-const [editCategoryMajor, setEditCategoryMajor] = useState("");
-const [editCategoryMinor, setEditCategoryMinor] = useState("");
-const [editCategoryKind, setEditCategoryKind] = useState("expense_normal");
-const [editCategoryWalletType, setEditCategoryWalletType] = useState("household");
+  const [editCategoryMajor, setEditCategoryMajor] = useState("");
+  const [editCategoryMinor, setEditCategoryMinor] = useState("");
+  const [editCategoryKind, setEditCategoryKind] = useState("expense_normal");
+  const [editCategoryWalletType, setEditCategoryWalletType] = useState("household");
 
-const [editMerchantMasterName, setEditMerchantMasterName] = useState("");
+  const [editMerchantMasterName, setEditMerchantMasterName] = useState("");
 
   const [transactions, setTransactions] = useState<TransactionListRow[]>([]);
   const [listLoading, setListLoading] = useState(false);
@@ -153,6 +153,7 @@ const [editMerchantMasterName, setEditMerchantMasterName] = useState("");
   const [newCategoryKind, setNewCategoryKind] = useState("expense_normal");
 
   const [keepPreviousInput, setKeepPreviousInput] = useState(true);
+  const [entryDirection, setEntryDirection] = useState<"expense" | "income">("expense");
 
   useEffect(() => {
     setDate(new Date().toISOString().slice(0, 10));
@@ -219,9 +220,9 @@ const [editMerchantMasterName, setEditMerchantMasterName] = useState("");
     if (wErr || aErr || cErr || mmErr) {
       setMessage(
         "読込エラー: " +
-          [wErr?.message, aErr?.message, cErr?.message, mmErr?.message]
-            .filter(Boolean)
-            .join(" / ")
+        [wErr?.message, aErr?.message, cErr?.message, mmErr?.message]
+          .filter(Boolean)
+          .join(" / ")
       );
       return;
     }
@@ -345,8 +346,21 @@ const [editMerchantMasterName, setEditMerchantMasterName] = useState("");
 
   const filteredCategories = useMemo(() => {
     const walletType = selectedWallet?.wallet_type || "household";
-    return categories.filter((c) => c.wallet_type === walletType || c.wallet_type === null);
-  }, [categories, selectedWallet]);
+
+    return categories.filter((c) => {
+      const walletOk = c.wallet_type === walletType || c.wallet_type === null;
+
+      if (entryDirection === "income") {
+        return walletOk && c.category_kind === "income";
+      }
+
+      return (
+        walletOk &&
+        (c.category_kind === "expense_normal" ||
+          c.category_kind === "expense_special")
+      );
+    });
+  }, [categories, selectedWallet, entryDirection]);
 
   const listTotalAmount = useMemo(() => {
     return transactions.reduce((sum, row) => sum + Number(row.amount || 0), 0);
@@ -407,13 +421,28 @@ const [editMerchantMasterName, setEditMerchantMasterName] = useState("");
       txn_date: date,
       posting_date: date,
       amount: Number(amount),
-      direction: "expense",
+
+      direction: entryDirection,
+
       category_id: categoryId || null,
-      payment_account_id: accountId || null,
-      receive_account_id: null,
+
+      payment_account_id:
+        entryDirection === "expense"
+          ? accountId || null
+          : null,
+
+      receive_account_id:
+        entryDirection === "income"
+          ? accountId || null
+          : null,
+
       merchant_name: merchantName || null,
       description: memo || null,
-      transaction_type: "cash_expense",
+
+      transaction_type:
+        entryDirection === "income"
+          ? "income"
+          : "cash_expense",
       import_source_id: null,
       external_row_key: null,
       statement_month: date.slice(0, 7),
@@ -548,18 +577,18 @@ const [editMerchantMasterName, setEditMerchantMasterName] = useState("");
     if (!ok) return;
 
     const { error } = await supabase
-    .from("accounts")
-    .delete()
-    .eq("id", id);
+      .from("accounts")
+      .delete()
+      .eq("id", id);
 
-  if (error) {
-    setMasterMessage("支払元削除エラー: " + error.message);
-    return;
-  }
+    if (error) {
+      setMasterMessage("支払元削除エラー: " + error.message);
+      return;
+    }
 
-  setMasterMessage("支払元を削除しました");
-  await loadData();
-};
+    setMasterMessage("支払元を削除しました");
+    await loadData();
+  };
 
   const deleteCategory = async (
     id: string,
@@ -729,174 +758,174 @@ const [editMerchantMasterName, setEditMerchantMasterName] = useState("");
   };
 
   const addMerchantMaster = async () => {
-  setMasterMessage("");
+    setMasterMessage("");
 
-  if (!user) {
-    setMasterMessage("ログインしてください");
-    return;
-  }
+    if (!user) {
+      setMasterMessage("ログインしてください");
+      return;
+    }
 
-  if (!newMerchantName.trim()) {
-    setMasterMessage("支払先名を入力してください");
-    return;
-  }
+    if (!newMerchantName.trim()) {
+      setMasterMessage("支払先名を入力してください");
+      return;
+    }
 
-  const maxOrder =
-    merchantMasters.length > 0
-      ? Math.max(...merchantMasters.map((x) => x.display_order ?? 0))
-      : 0;
+    const maxOrder =
+      merchantMasters.length > 0
+        ? Math.max(...merchantMasters.map((x) => x.display_order ?? 0))
+        : 0;
 
-  const { error } = await supabase.from("merchant_masters").insert({
-    user_id: user.id,
-    merchant_name: newMerchantName.trim(),
-    is_active: true,
-    display_order: maxOrder + 1,
-  });
+    const { error } = await supabase.from("merchant_masters").insert({
+      user_id: user.id,
+      merchant_name: newMerchantName.trim(),
+      is_active: true,
+      display_order: maxOrder + 1,
+    });
 
-  if (error) {
-    setMasterMessage("支払先追加エラー: " + error.message);
-    return;
-  }
+    if (error) {
+      setMasterMessage("支払先追加エラー: " + error.message);
+      return;
+    }
 
-  setMasterMessage("支払先候補を追加しました");
-  setNewMerchantName("");
-  await loadData();
-};
+    setMasterMessage("支払先候補を追加しました");
+    setNewMerchantName("");
+    await loadData();
+  };
 
-const deleteMerchantMaster = async (id: string, name: string) => {
-  const ok = window.confirm(`支払先候補「${name}」を削除しますか？`);
-  if (!ok) return;
+  const deleteMerchantMaster = async (id: string, name: string) => {
+    const ok = window.confirm(`支払先候補「${name}」を削除しますか？`);
+    if (!ok) return;
 
-  const { error } = await supabase
-    .from("merchant_masters")
-    .delete()
-    .eq("id", id);
+    const { error } = await supabase
+      .from("merchant_masters")
+      .delete()
+      .eq("id", id);
 
-  if (error) {
-    setMasterMessage("支払先削除エラー: " + error.message);
-    return;
-  }
+    if (error) {
+      setMasterMessage("支払先削除エラー: " + error.message);
+      return;
+    }
 
-  setMasterMessage("支払先候補を削除しました");
-  await loadData();
-};
+    setMasterMessage("支払先候補を削除しました");
+    await loadData();
+  };
 
-const moveMerchantMaster = async (id: string, direction: "up" | "down") => {
-  const index = merchantMasters.findIndex((x) => x.id === id);
-  if (index < 0) return;
+  const moveMerchantMaster = async (id: string, direction: "up" | "down") => {
+    const index = merchantMasters.findIndex((x) => x.id === id);
+    if (index < 0) return;
 
-  const targetIndex = direction === "up" ? index - 1 : index + 1;
-  if (targetIndex < 0 || targetIndex >= merchantMasters.length) return;
+    const targetIndex = direction === "up" ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= merchantMasters.length) return;
 
-  const current = merchantMasters[index];
-  const target = merchantMasters[targetIndex];
+    const current = merchantMasters[index];
+    const target = merchantMasters[targetIndex];
 
-  const { error: e1 } = await supabase
-    .from("merchant_masters")
-    .update({ display_order: target.display_order })
-    .eq("id", current.id);
+    const { error: e1 } = await supabase
+      .from("merchant_masters")
+      .update({ display_order: target.display_order })
+      .eq("id", current.id);
 
-  if (e1) {
-    setMasterMessage("支払先並び替えエラー: " + e1.message);
-    return;
-  }
+    if (e1) {
+      setMasterMessage("支払先並び替えエラー: " + e1.message);
+      return;
+    }
 
-  const { error: e2 } = await supabase
-    .from("merchant_masters")
-    .update({ display_order: current.display_order })
-    .eq("id", target.id);
+    const { error: e2 } = await supabase
+      .from("merchant_masters")
+      .update({ display_order: current.display_order })
+      .eq("id", target.id);
 
-  if (e2) {
-    setMasterMessage("支払先並び替えエラー: " + e2.message);
-    return;
-  }
+    if (e2) {
+      setMasterMessage("支払先並び替えエラー: " + e2.message);
+      return;
+    }
 
-  await loadData();
-};
+    await loadData();
+  };
 
-const startEditAccount = (a: AccountRow) => {
-  setEditingAccountId(a.id);
-  setEditAccountName(a.account_name);
-  setEditAccountType(a.account_type);
-};
+  const startEditAccount = (a: AccountRow) => {
+    setEditingAccountId(a.id);
+    setEditAccountName(a.account_name);
+    setEditAccountType(a.account_type);
+  };
 
-const saveEditAccount = async (id: string) => {
-  const { error } = await supabase
-    .from("accounts")
-    .update({
-      account_name: editAccountName.trim(),
-      account_type: editAccountType,
-    })
-    .eq("id", id);
+  const saveEditAccount = async (id: string) => {
+    const { error } = await supabase
+      .from("accounts")
+      .update({
+        account_name: editAccountName.trim(),
+        account_type: editAccountType,
+      })
+      .eq("id", id);
 
-  if (error) {
-    setMasterMessage("支払元更新エラー: " + error.message);
-    return;
-  }
+    if (error) {
+      setMasterMessage("支払元更新エラー: " + error.message);
+      return;
+    }
 
-  setMasterMessage("支払元を更新しました");
-  setEditingAccountId(null);
-  setEditAccountName("");
-  setEditAccountType("cash");
-  await loadData();
-};
+    setMasterMessage("支払元を更新しました");
+    setEditingAccountId(null);
+    setEditAccountName("");
+    setEditAccountType("cash");
+    await loadData();
+  };
 
-const startEditCategory = (c: CategoryRow) => {
-  setEditingCategoryId(c.id);
-  setEditCategoryWalletType(c.wallet_type || "household");
-  setEditCategoryMajor(c.major_category);
-  setEditCategoryMinor(c.minor_category);
-  setEditCategoryKind(c.category_kind);
-};
+  const startEditCategory = (c: CategoryRow) => {
+    setEditingCategoryId(c.id);
+    setEditCategoryWalletType(c.wallet_type || "household");
+    setEditCategoryMajor(c.major_category);
+    setEditCategoryMinor(c.minor_category);
+    setEditCategoryKind(c.category_kind);
+  };
 
-const saveEditCategory = async (id: string) => {
-  const { error } = await supabase
-    .from("categories")
-    .update({
-      wallet_type: editCategoryWalletType,
-      major_category: editCategoryMajor.trim(),
-      minor_category: editCategoryMinor.trim(),
-      category_kind: editCategoryKind,
-    })
-    .eq("id", id);
+  const saveEditCategory = async (id: string) => {
+    const { error } = await supabase
+      .from("categories")
+      .update({
+        wallet_type: editCategoryWalletType,
+        major_category: editCategoryMajor.trim(),
+        minor_category: editCategoryMinor.trim(),
+        category_kind: editCategoryKind,
+      })
+      .eq("id", id);
 
-  if (error) {
-    setMasterMessage("費目更新エラー: " + error.message);
-    return;
-  }
+    if (error) {
+      setMasterMessage("費目更新エラー: " + error.message);
+      return;
+    }
 
-  setMasterMessage("費目を更新しました");
-  setEditingCategoryId(null);
-  setEditCategoryWalletType("household");
-  setEditCategoryMajor("");
-  setEditCategoryMinor("");
-  setEditCategoryKind("expense_normal");
-  await loadData();
-};
+    setMasterMessage("費目を更新しました");
+    setEditingCategoryId(null);
+    setEditCategoryWalletType("household");
+    setEditCategoryMajor("");
+    setEditCategoryMinor("");
+    setEditCategoryKind("expense_normal");
+    await loadData();
+  };
 
-const startEditMerchantMaster = (m: MerchantMasterRow) => {
-  setEditingMerchantMasterId(m.id);
-  setEditMerchantMasterName(m.merchant_name);
-};
+  const startEditMerchantMaster = (m: MerchantMasterRow) => {
+    setEditingMerchantMasterId(m.id);
+    setEditMerchantMasterName(m.merchant_name);
+  };
 
-const saveEditMerchantMaster = async (id: string) => {
-  const { error } = await supabase
-    .from("merchant_masters")
-    .update({
-      merchant_name: editMerchantMasterName.trim(),
-    })
-    .eq("id", id);
+  const saveEditMerchantMaster = async (id: string) => {
+    const { error } = await supabase
+      .from("merchant_masters")
+      .update({
+        merchant_name: editMerchantMasterName.trim(),
+      })
+      .eq("id", id);
 
-  if (error) {
-    setMasterMessage("支払先更新エラー: " + error.message);
-    return;
-  }
+    if (error) {
+      setMasterMessage("支払先更新エラー: " + error.message);
+      return;
+    }
 
-  setMasterMessage("支払先候補を更新しました");
-  setEditingMerchantMasterId(null);
-  setEditMerchantMasterName("");
-  await loadData();
-};
+    setMasterMessage("支払先候補を更新しました");
+    setEditingMerchantMasterId(null);
+    setEditMerchantMasterName("");
+    await loadData();
+  };
 
 
 
@@ -1084,6 +1113,21 @@ const saveEditMerchantMaster = async (id: string) => {
           </div>
 
           <div>
+            <div style={{ marginBottom: "4px" }}>区分</div>
+            <select
+              value={entryDirection}
+              onChange={(e) => {
+                setEntryDirection(e.target.value as "expense" | "income");
+                setCategoryId("");
+              }}
+              style={{ width: "100%", padding: "8px" }}
+            >
+              <option value="expense">支出</option>
+              <option value="income">収入</option>
+            </select>
+          </div>
+
+          <div>
             <div style={{ marginBottom: "4px" }}>日付</div>
             <input
               type="date"
@@ -1120,7 +1164,9 @@ const saveEditMerchantMaster = async (id: string) => {
           </div>
 
           <div>
-            <div style={{ marginBottom: "4px" }}>支払元</div>
+            <div style={{ marginBottom: "4px" }}>
+              {entryDirection === "income" ? "入金先" : "支払元"}
+            </div>
             <select
               value={accountId}
               onChange={(e) => setAccountId(e.target.value)}
@@ -1279,316 +1325,316 @@ const saveEditMerchantMaster = async (id: string) => {
             borderRadius: "8px",
           }}
         >
-    <div
-      style={{
-        display: "grid",
-        gap: "10px",
-        border: "1px solid #374151",
-        borderRadius: "8px",
-        padding: "12px",
-        background: "#1f2937",
-        color: "#f9fafb",
-      }}
-    >
-      <div style={{ fontWeight: "bold" }}>一覧条件</div>
-
-      <div
-        style={{
-          display: "grid",
-          gap: "10px",
-          gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
-        }}
-      >
-        <div>
-          <div style={{ marginBottom: "4px" }}>月</div>
-          <input
-            type="month"
-            value={listMonth}
-            onChange={(e) => setListMonth(e.target.value)}
-            style={{ width: "100%", padding: "8px" }}
-          />
-        </div>
-
-        <div>
-          <div style={{ marginBottom: "4px" }}>財布</div>
-          <select
-            value={listWalletId}
-            onChange={(e) => setListWalletId(e.target.value)}
-            style={{ width: "100%", padding: "8px" }}
+          <div
+            style={{
+              display: "grid",
+              gap: "10px",
+              border: "1px solid #374151",
+              borderRadius: "8px",
+              padding: "12px",
+              background: "#1f2937",
+              color: "#f9fafb",
+            }}
           >
-            <option value="">すべて</option>
-            {wallets.map((w) => (
-              <option key={w.id} value={w.id}>
-                {w.wallet_name}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
+            <div style={{ fontWeight: "bold" }}>一覧条件</div>
 
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          gap: "12px",
-          flexWrap: "wrap",
-        }}
-      >
-        <div style={{ fontWeight: "bold" }}>
-          合計: {listTotalAmount.toLocaleString()}円
-        </div>
-
-        <button
-          onClick={async () => {
-            await loadTransactions();
-          }}
-          style={{
-            padding: "8px 12px",
-            background: "#e5e7eb",
-            border: "none",
-            borderRadius: "8px",
-          }}
-        >
-          再読込
-        </button>
-      </div>
-    </div>
-
-    {listLoading && <div>読み込み中...</div>}
-
-    {!listLoading && transactions.length === 0 && (
-      <div>該当する明細がありません。</div>
-    )}
-
-    {!listLoading && transactions.length > 0 && (
-      <div
-        style={{
-          overflowX: "auto",
-          background: "#111827",
-          borderRadius: "8px",
-          border: "1px solid #374151",
-        }}
-      >
-        <table
-          style={{
-            borderCollapse: "collapse",
-            width: "100%",
-            minWidth: "980px",
-            background: "#111827",
-            color: "#f9fafb",
-          }}
-        >
-          <thead>
-            <tr style={{ background: "#1f2937" }}>
-              <th style={th}>日付</th>
-              <th style={th}>金額</th>
-              <th style={th}>費目</th>
-              <th style={th}>支払元</th>
-              <th style={th}>支払先</th>
-              <th style={th}>メモ</th>
-              <th style={th}>税</th>
-              <th style={th}>レシート</th>
-              <th style={th}>操作</th>
-            </tr>
-          </thead>
-
-          <tbody>
-  {transactions.map((t) => {
-    const category = Array.isArray(t.categories)
-      ? t.categories[0]
-      : t.categories;
-
-    const account = Array.isArray(t.accounts)
-      ? t.accounts[0]
-      : t.accounts;
-
-    const isEditing = editingId === t.id;
-
-    return (
-      <tr key={t.id} style={{ borderBottom: "1px solid #ddd" }}>
-        <td style={td}>
-          {isEditing ? (
-            <input
-              type="date"
-              value={editDate}
-              onChange={(e) => setEditDate(e.target.value)}
-              style={{ width: "140px", padding: "6px" }}
-            />
-          ) : (
-            t.txn_date
-          )}
-        </td>
-
-        <td style={{ ...td, textAlign: "right" }}>
-          {isEditing ? (
-            <input
-              type="number"
-              value={editAmount}
-              onChange={(e) => setEditAmount(e.target.value)}
-              style={{ width: "100px", padding: "6px" }}
-            />
-          ) : (
-            `${Number(t.amount).toLocaleString()}円`
-          )}
-        </td>
-
-        <td style={td}>
-          {isEditing ? (
-            <select
-              value={editCategoryId}
-              onChange={(e) => setEditCategoryId(e.target.value)}
-              style={{ width: "180px", padding: "6px" }}
+            <div
+              style={{
+                display: "grid",
+                gap: "10px",
+                gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+              }}
             >
-              <option value="">選択してください</option>
-              {categories.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.major_category} / {c.minor_category}
-                </option>
-              ))}
-            </select>
-          ) : category ? (
-            `${category.major_category} / ${category.minor_category}`
-          ) : (
-            "-"
-          )}
-        </td>
+              <div>
+                <div style={{ marginBottom: "4px" }}>月</div>
+                <input
+                  type="month"
+                  value={listMonth}
+                  onChange={(e) => setListMonth(e.target.value)}
+                  style={{ width: "100%", padding: "8px" }}
+                />
+              </div>
 
-        <td style={td}>
-          {isEditing ? (
-            <select
-              value={editAccountId}
-              onChange={(e) => setEditAccountId(e.target.value)}
-              style={{ width: "150px", padding: "6px" }}
+              <div>
+                <div style={{ marginBottom: "4px" }}>財布</div>
+                <select
+                  value={listWalletId}
+                  onChange={(e) => setListWalletId(e.target.value)}
+                  style={{ width: "100%", padding: "8px" }}
+                >
+                  <option value="">すべて</option>
+                  {wallets.map((w) => (
+                    <option key={w.id} value={w.id}>
+                      {w.wallet_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: "12px",
+                flexWrap: "wrap",
+              }}
             >
-              <option value="">選択してください</option>
-              {accounts.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.account_name}
-                </option>
-              ))}
-            </select>
-          ) : (
-            account ? account.account_name : "-"
-          )}
-        </td>
+              <div style={{ fontWeight: "bold" }}>
+                合計: {listTotalAmount.toLocaleString()}円
+              </div>
 
-        <td style={td}>
-          {isEditing ? (
-            <>
-              <input
-                list="merchant-candidates"
-                value={editMerchantName}
-                onChange={(e) => setEditMerchantName(e.target.value)}
-                style={{ width: "160px", padding: "6px" }}
-              />
-              <datalist id="merchant-candidates">
-                {merchantCandidates.map((name) => (
-                  <option key={name} value={name} />
-                ))}
-              </datalist>
-            </>
-          ) : (
-            t.merchant_name || "-"
-          )}
-        </td>
-
-        <td style={td}>
-          {isEditing ? (
-            <input
-              value={editMemo}
-              onChange={(e) => setEditMemo(e.target.value)}
-              style={{ width: "180px", padding: "6px" }}
-            />
-          ) : (
-            t.description || "-"
-          )}
-        </td>
-
-        <td style={td}>
-          {t.tax_mode && t.tax_mode !== "none"
-            ? `${t.tax_mode} ${t.tax_rate ?? ""}% (${t.tax_amount ?? ""})`
-            : "-"}
-        </td>
-
-        <td style={td}>
-          {t.receipt_group_id
-            ? `${t.receipt_group_id.slice(0, 8)}...-${t.receipt_line_no ?? ""}`
-            : "-"}
-        </td>
-
-        <td style={td}>
-          <div style={{ display: "flex", gap: "6px" }}>
-            {isEditing ? (
-              <>
-                <button
-                  onClick={async () => {
-                    await saveEditTransaction(t.id);
-                  }}
-                  style={{
-                    padding: "6px 10px",
-                    background: "#2563eb",
-                    color: "#fff",
-                    border: "none",
-                    borderRadius: "6px",
-                  }}
-                >
-                  保存
-                </button>
-                <button
-                  onClick={cancelEditTransaction}
-                  style={{
-                    padding: "6px 10px",
-                    background: "#6b7280",
-                    color: "#fff",
-                    border: "none",
-                    borderRadius: "6px",
-                  }}
-                >
-                  戻す
-                </button>
-              </>
-            ) : (
-              <>
-                <button
-                  onClick={() => startEditTransaction(t)}
-                  style={{
-                    padding: "6px 10px",
-                    background: "#2563eb",
-                    color: "#fff",
-                    border: "none",
-                    borderRadius: "6px",
-                  }}
-                >
-                  編集
-                </button>
-                <button
-                  onClick={async () => {
-                    await deleteTransaction(t.id);
-                  }}
-                  style={{
-                    padding: "6px 10px",
-                    background: "#dc2626",
-                    color: "#fff",
-                    border: "none",
-                    borderRadius: "6px",
-                  }}
-                >
-                  削除
-                </button>
-              </>
-            )}
+              <button
+                onClick={async () => {
+                  await loadTransactions();
+                }}
+                style={{
+                  padding: "8px 12px",
+                  background: "#e5e7eb",
+                  border: "none",
+                  borderRadius: "8px",
+                }}
+              >
+                再読込
+              </button>
+            </div>
           </div>
-        </td>
-      </tr>
-    );
-  })}
-</tbody>
-        </table>
-      </div>
-    )}
-  </div>
-)}
+
+          {listLoading && <div>読み込み中...</div>}
+
+          {!listLoading && transactions.length === 0 && (
+            <div>該当する明細がありません。</div>
+          )}
+
+          {!listLoading && transactions.length > 0 && (
+            <div
+              style={{
+                overflowX: "auto",
+                background: "#111827",
+                borderRadius: "8px",
+                border: "1px solid #374151",
+              }}
+            >
+              <table
+                style={{
+                  borderCollapse: "collapse",
+                  width: "100%",
+                  minWidth: "980px",
+                  background: "#111827",
+                  color: "#f9fafb",
+                }}
+              >
+                <thead>
+                  <tr style={{ background: "#1f2937" }}>
+                    <th style={th}>日付</th>
+                    <th style={th}>金額</th>
+                    <th style={th}>費目</th>
+                    <th style={th}>支払元</th>
+                    <th style={th}>支払先</th>
+                    <th style={th}>メモ</th>
+                    <th style={th}>税</th>
+                    <th style={th}>レシート</th>
+                    <th style={th}>操作</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {transactions.map((t) => {
+                    const category = Array.isArray(t.categories)
+                      ? t.categories[0]
+                      : t.categories;
+
+                    const account = Array.isArray(t.accounts)
+                      ? t.accounts[0]
+                      : t.accounts;
+
+                    const isEditing = editingId === t.id;
+
+                    return (
+                      <tr key={t.id} style={{ borderBottom: "1px solid #ddd" }}>
+                        <td style={td}>
+                          {isEditing ? (
+                            <input
+                              type="date"
+                              value={editDate}
+                              onChange={(e) => setEditDate(e.target.value)}
+                              style={{ width: "140px", padding: "6px" }}
+                            />
+                          ) : (
+                            t.txn_date
+                          )}
+                        </td>
+
+                        <td style={{ ...td, textAlign: "right" }}>
+                          {isEditing ? (
+                            <input
+                              type="number"
+                              value={editAmount}
+                              onChange={(e) => setEditAmount(e.target.value)}
+                              style={{ width: "100px", padding: "6px" }}
+                            />
+                          ) : (
+                            `${Number(t.amount).toLocaleString()}円`
+                          )}
+                        </td>
+
+                        <td style={td}>
+                          {isEditing ? (
+                            <select
+                              value={editCategoryId}
+                              onChange={(e) => setEditCategoryId(e.target.value)}
+                              style={{ width: "180px", padding: "6px" }}
+                            >
+                              <option value="">選択してください</option>
+                              {categories.map((c) => (
+                                <option key={c.id} value={c.id}>
+                                  {c.major_category} / {c.minor_category}
+                                </option>
+                              ))}
+                            </select>
+                          ) : category ? (
+                            `${category.major_category} / ${category.minor_category}`
+                          ) : (
+                            "-"
+                          )}
+                        </td>
+
+                        <td style={td}>
+                          {isEditing ? (
+                            <select
+                              value={editAccountId}
+                              onChange={(e) => setEditAccountId(e.target.value)}
+                              style={{ width: "150px", padding: "6px" }}
+                            >
+                              <option value="">選択してください</option>
+                              {accounts.map((a) => (
+                                <option key={a.id} value={a.id}>
+                                  {a.account_name}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            account ? account.account_name : "-"
+                          )}
+                        </td>
+
+                        <td style={td}>
+                          {isEditing ? (
+                            <>
+                              <input
+                                list="merchant-candidates"
+                                value={editMerchantName}
+                                onChange={(e) => setEditMerchantName(e.target.value)}
+                                style={{ width: "160px", padding: "6px" }}
+                              />
+                              <datalist id="merchant-candidates">
+                                {merchantCandidates.map((name) => (
+                                  <option key={name} value={name} />
+                                ))}
+                              </datalist>
+                            </>
+                          ) : (
+                            t.merchant_name || "-"
+                          )}
+                        </td>
+
+                        <td style={td}>
+                          {isEditing ? (
+                            <input
+                              value={editMemo}
+                              onChange={(e) => setEditMemo(e.target.value)}
+                              style={{ width: "180px", padding: "6px" }}
+                            />
+                          ) : (
+                            t.description || "-"
+                          )}
+                        </td>
+
+                        <td style={td}>
+                          {t.tax_mode && t.tax_mode !== "none"
+                            ? `${t.tax_mode} ${t.tax_rate ?? ""}% (${t.tax_amount ?? ""})`
+                            : "-"}
+                        </td>
+
+                        <td style={td}>
+                          {t.receipt_group_id
+                            ? `${t.receipt_group_id.slice(0, 8)}...-${t.receipt_line_no ?? ""}`
+                            : "-"}
+                        </td>
+
+                        <td style={td}>
+                          <div style={{ display: "flex", gap: "6px" }}>
+                            {isEditing ? (
+                              <>
+                                <button
+                                  onClick={async () => {
+                                    await saveEditTransaction(t.id);
+                                  }}
+                                  style={{
+                                    padding: "6px 10px",
+                                    background: "#2563eb",
+                                    color: "#fff",
+                                    border: "none",
+                                    borderRadius: "6px",
+                                  }}
+                                >
+                                  保存
+                                </button>
+                                <button
+                                  onClick={cancelEditTransaction}
+                                  style={{
+                                    padding: "6px 10px",
+                                    background: "#6b7280",
+                                    color: "#fff",
+                                    border: "none",
+                                    borderRadius: "6px",
+                                  }}
+                                >
+                                  戻す
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <button
+                                  onClick={() => startEditTransaction(t)}
+                                  style={{
+                                    padding: "6px 10px",
+                                    background: "#2563eb",
+                                    color: "#fff",
+                                    border: "none",
+                                    borderRadius: "6px",
+                                  }}
+                                >
+                                  編集
+                                </button>
+                                <button
+                                  onClick={async () => {
+                                    await deleteTransaction(t.id);
+                                  }}
+                                  style={{
+                                    padding: "6px 10px",
+                                    background: "#dc2626",
+                                    color: "#fff",
+                                    border: "none",
+                                    borderRadius: "6px",
+                                  }}
+                                >
+                                  削除
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       {screenMode === "masters" && (
         <div style={{ display: "grid", gap: "20px" }}>
@@ -1732,283 +1778,283 @@ const saveEditMerchantMaster = async (id: string) => {
           </div>
 
           <div
-  style={{
-    border: "1px solid #ddd",
-    borderRadius: "8px",
-    padding: "12px",
-  }}
->
-  <h2 style={{ marginTop: 0, fontSize: "18px" }}>現在の支払元</h2>
+            style={{
+              border: "1px solid #ddd",
+              borderRadius: "8px",
+              padding: "12px",
+            }}
+          >
+            <h2 style={{ marginTop: 0, fontSize: "18px" }}>現在の支払元</h2>
 
-  <div style={{ display: "grid", gap: "8px" }}>
-    {accounts.map((a, idx) => {
-      const isEditing = editingAccountId === a.id;
+            <div style={{ display: "grid", gap: "8px" }}>
+              {accounts.map((a, idx) => {
+                const isEditing = editingAccountId === a.id;
 
-      return (
-        <div
-          key={a.id}
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            gap: "8px",
-            borderBottom: "1px solid #eee",
-            paddingBottom: "6px",
-          }}
-        >
-          <div style={{ fontSize: "14px", flex: 1 }}>
-            {isEditing ? (
-              <div style={{ display: "grid", gap: "6px" }}>
-                <input
-                  value={editAccountName}
-                  onChange={(e) => setEditAccountName(e.target.value)}
-                  style={{ width: "100%", padding: "6px" }}
-                />
-                <select
-                  value={editAccountType}
-                  onChange={(e) => setEditAccountType(e.target.value)}
-                  style={{ width: "100%", padding: "6px" }}
-                >
-                  <option value="cash">cash</option>
-                  <option value="bank">bank</option>
-                  <option value="credit_card">credit_card</option>
-                  <option value="emoney">emoney</option>
-                  <option value="prepaid">prepaid</option>
-                </select>
-              </div>
-            ) : (
-              `${a.account_name} (${a.account_type})`
-            )}
+                return (
+                  <div
+                    key={a.id}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: "8px",
+                      borderBottom: "1px solid #eee",
+                      paddingBottom: "6px",
+                    }}
+                  >
+                    <div style={{ fontSize: "14px", flex: 1 }}>
+                      {isEditing ? (
+                        <div style={{ display: "grid", gap: "6px" }}>
+                          <input
+                            value={editAccountName}
+                            onChange={(e) => setEditAccountName(e.target.value)}
+                            style={{ width: "100%", padding: "6px" }}
+                          />
+                          <select
+                            value={editAccountType}
+                            onChange={(e) => setEditAccountType(e.target.value)}
+                            style={{ width: "100%", padding: "6px" }}
+                          >
+                            <option value="cash">cash</option>
+                            <option value="bank">bank</option>
+                            <option value="credit_card">credit_card</option>
+                            <option value="emoney">emoney</option>
+                            <option value="prepaid">prepaid</option>
+                          </select>
+                        </div>
+                      ) : (
+                        `${a.account_name} (${a.account_type})`
+                      )}
+                    </div>
+
+                    <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                      {isEditing ? (
+                        <>
+                          <button onClick={async () => await saveEditAccount(a.id)}>保存</button>
+                          <button onClick={() => setEditingAccountId(null)}>戻す</button>
+                        </>
+                      ) : (
+                        <button onClick={() => startEditAccount(a)}>編集</button>
+                      )}
+
+                      <button
+                        onClick={async () => await moveAccount(a.id, "up")}
+                        disabled={idx === 0}
+                      >
+                        ↑
+                      </button>
+                      <button
+                        onClick={async () => await moveAccount(a.id, "down")}
+                        disabled={idx === accounts.length - 1}
+                      >
+                        ↓
+                      </button>
+                      <button
+                        onClick={async () => {
+                          await deleteAccount(a.id, a.account_name);
+                        }}
+                        style={{
+                          background: "#dc2626",
+                          color: "#fff",
+                          border: "none",
+                          borderRadius: "6px",
+                          padding: "6px 10px",
+                        }}
+                      >
+                        削除
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
-
-          <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-            {isEditing ? (
-              <>
-                <button onClick={async () => await saveEditAccount(a.id)}>保存</button>
-                <button onClick={() => setEditingAccountId(null)}>戻す</button>
-              </>
-            ) : (
-              <button onClick={() => startEditAccount(a)}>編集</button>
-            )}
-
-            <button
-              onClick={async () => await moveAccount(a.id, "up")}
-              disabled={idx === 0}
-            >
-              ↑
-            </button>
-            <button
-              onClick={async () => await moveAccount(a.id, "down")}
-              disabled={idx === accounts.length - 1}
-            >
-              ↓
-            </button>
-            <button
-              onClick={async () => {
-                await deleteAccount(a.id, a.account_name);
-              }}
-              style={{
-                background: "#dc2626",
-                color: "#fff",
-                border: "none",
-                borderRadius: "6px",
-                padding: "6px 10px",
-              }}
-            >
-              削除
-            </button>
-          </div>
-        </div>
-      );
-    })}
-  </div>
-</div>
 
           <div
-  style={{
-    border: "1px solid #ddd",
-    borderRadius: "8px",
-    padding: "12px",
-  }}
->
-  <h2 style={{ marginTop: 0, fontSize: "18px" }}>現在の費目</h2>
+            style={{
+              border: "1px solid #ddd",
+              borderRadius: "8px",
+              padding: "12px",
+            }}
+          >
+            <h2 style={{ marginTop: 0, fontSize: "18px" }}>現在の費目</h2>
 
-  <div style={{ display: "grid", gap: "8px" }}>
-    {categories.map((c, idx) => {
-      const isEditing = editingCategoryId === c.id;
+            <div style={{ display: "grid", gap: "8px" }}>
+              {categories.map((c, idx) => {
+                const isEditing = editingCategoryId === c.id;
 
-      return (
-        <div
-          key={c.id}
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            gap: "8px",
-            borderBottom: "1px solid #eee",
-            paddingBottom: "6px",
-          }}
-        >
-          <div style={{ fontSize: "14px", flex: 1 }}>
-            {isEditing ? (
-              <div style={{ display: "grid", gap: "6px" }}>
-                <select
-                  value={editCategoryWalletType}
-                  onChange={(e) => setEditCategoryWalletType(e.target.value)}
-                  style={{ width: "100%", padding: "6px" }}
-                >
-                  <option value="household">household</option>
-                  <option value="allowance">allowance</option>
-                </select>
-                <input
-                  value={editCategoryMajor}
-                  onChange={(e) => setEditCategoryMajor(e.target.value)}
-                  style={{ width: "100%", padding: "6px" }}
-                />
-                <input
-                  value={editCategoryMinor}
-                  onChange={(e) => setEditCategoryMinor(e.target.value)}
-                  style={{ width: "100%", padding: "6px" }}
-                />
-                <select
-                  value={editCategoryKind}
-                  onChange={(e) => setEditCategoryKind(e.target.value)}
-                  style={{ width: "100%", padding: "6px" }}
-                >
-                  <option value="expense_normal">expense_normal</option>
-                  <option value="expense_special">expense_special</option>
-                  <option value="income">income</option>
-                  <option value="transfer">transfer</option>
-                  <option value="charge">charge</option>
-                </select>
-              </div>
-            ) : (
-              `[${c.wallet_type}] ${c.major_category} / ${c.minor_category}`
-            )}
+                return (
+                  <div
+                    key={c.id}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: "8px",
+                      borderBottom: "1px solid #eee",
+                      paddingBottom: "6px",
+                    }}
+                  >
+                    <div style={{ fontSize: "14px", flex: 1 }}>
+                      {isEditing ? (
+                        <div style={{ display: "grid", gap: "6px" }}>
+                          <select
+                            value={editCategoryWalletType}
+                            onChange={(e) => setEditCategoryWalletType(e.target.value)}
+                            style={{ width: "100%", padding: "6px" }}
+                          >
+                            <option value="household">household</option>
+                            <option value="allowance">allowance</option>
+                          </select>
+                          <input
+                            value={editCategoryMajor}
+                            onChange={(e) => setEditCategoryMajor(e.target.value)}
+                            style={{ width: "100%", padding: "6px" }}
+                          />
+                          <input
+                            value={editCategoryMinor}
+                            onChange={(e) => setEditCategoryMinor(e.target.value)}
+                            style={{ width: "100%", padding: "6px" }}
+                          />
+                          <select
+                            value={editCategoryKind}
+                            onChange={(e) => setEditCategoryKind(e.target.value)}
+                            style={{ width: "100%", padding: "6px" }}
+                          >
+                            <option value="expense_normal">expense_normal</option>
+                            <option value="expense_special">expense_special</option>
+                            <option value="income">income</option>
+                            <option value="transfer">transfer</option>
+                            <option value="charge">charge</option>
+                          </select>
+                        </div>
+                      ) : (
+                        `[${c.wallet_type}] ${c.major_category} / ${c.minor_category}`
+                      )}
+                    </div>
+
+                    <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                      {isEditing ? (
+                        <>
+                          <button onClick={async () => await saveEditCategory(c.id)}>保存</button>
+                          <button onClick={() => setEditingCategoryId(null)}>戻す</button>
+                        </>
+                      ) : (
+                        <button onClick={() => startEditCategory(c)}>編集</button>
+                      )}
+
+                      <button
+                        onClick={async () => await moveCategory(c.id, "up")}
+                        disabled={idx === 0}
+                      >
+                        ↑
+                      </button>
+                      <button
+                        onClick={async () => await moveCategory(c.id, "down")}
+                        disabled={idx === categories.length - 1}
+                      >
+                        ↓
+                      </button>
+                      <button
+                        onClick={async () => {
+                          await deleteCategory(c.id, c.major_category, c.minor_category);
+                        }}
+                        style={{
+                          background: "#dc2626",
+                          color: "#fff",
+                          border: "none",
+                          borderRadius: "6px",
+                          padding: "6px 10px",
+                        }}
+                      >
+                        削除
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
-          <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-            {isEditing ? (
-              <>
-                <button onClick={async () => await saveEditCategory(c.id)}>保存</button>
-                <button onClick={() => setEditingCategoryId(null)}>戻す</button>
-              </>
-            ) : (
-              <button onClick={() => startEditCategory(c)}>編集</button>
-            )}
+          <div
+            style={{
+              border: "1px solid #ddd",
+              borderRadius: "8px",
+              padding: "12px",
+            }}
+          >
+            <h2 style={{ marginTop: 0, fontSize: "18px" }}>現在の支払先候補</h2>
 
-            <button
-              onClick={async () => await moveCategory(c.id, "up")}
-              disabled={idx === 0}
-            >
-              ↑
-            </button>
-            <button
-              onClick={async () => await moveCategory(c.id, "down")}
-              disabled={idx === categories.length - 1}
-            >
-              ↓
-            </button>
-            <button
-              onClick={async () => {
-                await deleteCategory(c.id, c.major_category, c.minor_category);
-              }}
-              style={{
-                background: "#dc2626",
-                color: "#fff",
-                border: "none",
-                borderRadius: "6px",
-                padding: "6px 10px",
-              }}
-            >
-              削除
-            </button>
+            <div style={{ display: "grid", gap: "8px" }}>
+              {merchantMasters.map((m, idx) => {
+                const isEditing = editingMerchantMasterId === m.id;
+
+                return (
+                  <div
+                    key={m.id}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: "8px",
+                      borderBottom: "1px solid #eee",
+                      paddingBottom: "6px",
+                    }}
+                  >
+                    <div style={{ fontSize: "14px", flex: 1 }}>
+                      {isEditing ? (
+                        <input
+                          value={editMerchantMasterName}
+                          onChange={(e) => setEditMerchantMasterName(e.target.value)}
+                          style={{ width: "100%", padding: "6px" }}
+                        />
+                      ) : (
+                        m.merchant_name
+                      )}
+                    </div>
+
+                    <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                      {isEditing ? (
+                        <>
+                          <button onClick={async () => await saveEditMerchantMaster(m.id)}>保存</button>
+                          <button onClick={() => setEditingMerchantMasterId(null)}>戻す</button>
+                        </>
+                      ) : (
+                        <button onClick={() => startEditMerchantMaster(m)}>編集</button>
+                      )}
+
+                      <button
+                        onClick={async () => await moveMerchantMaster(m.id, "up")}
+                        disabled={idx === 0}
+                      >
+                        ↑
+                      </button>
+                      <button
+                        onClick={async () => await moveMerchantMaster(m.id, "down")}
+                        disabled={idx === merchantMasters.length - 1}
+                      >
+                        ↓
+                      </button>
+                      <button
+                        onClick={async () => {
+                          await deleteMerchantMaster(m.id, m.merchant_name);
+                        }}
+                        style={{
+                          background: "#dc2626",
+                          color: "#fff",
+                          border: "none",
+                          borderRadius: "6px",
+                          padding: "6px 10px",
+                        }}
+                      >
+                        削除
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
-        </div>
-      );
-    })}
-  </div>
-</div>
-
-<div
-  style={{
-    border: "1px solid #ddd",
-    borderRadius: "8px",
-    padding: "12px",
-  }}
->
-  <h2 style={{ marginTop: 0, fontSize: "18px" }}>現在の支払先候補</h2>
-
-  <div style={{ display: "grid", gap: "8px" }}>
-    {merchantMasters.map((m, idx) => {
-      const isEditing = editingMerchantMasterId === m.id;
-
-      return (
-        <div
-          key={m.id}
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            gap: "8px",
-            borderBottom: "1px solid #eee",
-            paddingBottom: "6px",
-          }}
-        >
-          <div style={{ fontSize: "14px", flex: 1 }}>
-            {isEditing ? (
-              <input
-                value={editMerchantMasterName}
-                onChange={(e) => setEditMerchantMasterName(e.target.value)}
-                style={{ width: "100%", padding: "6px" }}
-              />
-            ) : (
-              m.merchant_name
-            )}
-          </div>
-
-          <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-            {isEditing ? (
-              <>
-                <button onClick={async () => await saveEditMerchantMaster(m.id)}>保存</button>
-                <button onClick={() => setEditingMerchantMasterId(null)}>戻す</button>
-              </>
-            ) : (
-              <button onClick={() => startEditMerchantMaster(m)}>編集</button>
-            )}
-
-            <button
-              onClick={async () => await moveMerchantMaster(m.id, "up")}
-              disabled={idx === 0}
-            >
-              ↑
-            </button>
-            <button
-              onClick={async () => await moveMerchantMaster(m.id, "down")}
-              disabled={idx === merchantMasters.length - 1}
-            >
-              ↓
-            </button>
-            <button
-              onClick={async () => {
-                await deleteMerchantMaster(m.id, m.merchant_name);
-              }}
-              style={{
-                background: "#dc2626",
-                color: "#fff",
-                border: "none",
-                borderRadius: "6px",
-                padding: "6px 10px",
-              }}
-            >
-              削除
-            </button>
-          </div>
-        </div>
-      );
-    })}
-  </div>
-</div>
 
           <div>{masterMessage}</div>
         </div>
