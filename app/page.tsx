@@ -119,7 +119,8 @@ export default function Page() {
   const [editAccountId, setEditAccountId] = useState("");
   const [editMerchantName, setEditMerchantName] = useState("");
   const [editMemo, setEditMemo] = useState("");
-  const [editDirection, setEditDirection] = useState<"expense" | "income">("expense");
+  const [editDirection, setEditDirection] =
+    useState<"expense" | "income" | "transfer">("expense");
 
   const [listMonth, setListMonth] = useState(
     new Date().toISOString().slice(0, 7)
@@ -945,6 +946,12 @@ export default function Page() {
     await loadData();
   };
 
+  const directionLabel = (direction: string | null) => {
+    if (direction === "income") return "収入";
+    if (direction === "transfer") return "資金移動";
+    return "支出";
+  };
+
 
 
   if (authLoading) {
@@ -1491,7 +1498,12 @@ export default function Page() {
                             <select
                               value={editDirection}
                               onChange={(e) =>
-                                setEditDirection(e.target.value as "expense" | "income")
+                                setEditDirection(
+                                  e.target.value as
+                                  | "expense"
+                                  | "income"
+                                  | "transfer"
+                                )
                               }
                               style={{ padding: "6px" }}
                             >
@@ -1499,10 +1511,8 @@ export default function Page() {
                               <option value="income">収入</option>
                               <option value="transfer">資金移動</option>
                             </select>
-                          ) : t.direction === "income" ? (
-                            "収入"
                           ) : (
-                            "支出"
+                            directionLabel(t.direction)
                           )}
                         </td>
 
