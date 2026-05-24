@@ -66,6 +66,7 @@ type TransactionListRow = {
     account_name: string;
   }[]
   | null;
+  direction: string;
 };
 
 type ScreenMode = "entry" | "list" | "masters";
@@ -118,6 +119,7 @@ export default function Page() {
   const [editAccountId, setEditAccountId] = useState("");
   const [editMerchantName, setEditMerchantName] = useState("");
   const [editMemo, setEditMemo] = useState("");
+  const [editDirection, setEditDirection] = useState<"expense" | "income">("expense");
 
   const [listMonth, setListMonth] = useState(
     new Date().toISOString().slice(0, 7)
@@ -153,7 +155,8 @@ export default function Page() {
   const [newCategoryKind, setNewCategoryKind] = useState("expense_normal");
 
   const [keepPreviousInput, setKeepPreviousInput] = useState(true);
-  const [entryDirection, setEntryDirection] = useState<"expense" | "income">("expense");
+  const [entryDirection, setEntryDirection] =
+    useState<"expense" | "income" | "transfer">("expense");
 
   useEffect(() => {
     setDate(new Date().toISOString().slice(0, 10));
@@ -257,6 +260,7 @@ export default function Page() {
         id,
         txn_date,
         amount,
+        direction,
         wallet_id,
         category_id,
         payment_account_id,
@@ -354,6 +358,13 @@ export default function Page() {
         return walletOk && c.category_kind === "income";
       }
 
+      if (entryDirection === "transfer") {
+        return (
+          walletOk &&
+          (c.category_kind === "transfer" || c.category_kind === "charge")
+        );
+      }
+
       return (
         walletOk &&
         (c.category_kind === "expense_normal" ||
@@ -422,7 +433,8 @@ export default function Page() {
       posting_date: date,
       amount: Number(amount),
 
-      direction: entryDirection,
+      direction:
+        entryDirection === "transfer" ? "transfer" : entryDirection,
 
       category_id: categoryId || null,
 
@@ -442,7 +454,9 @@ export default function Page() {
       transaction_type:
         entryDirection === "income"
           ? "income"
-          : "cash_expense",
+          : entryDirection === "transfer"
+            ? "transfer"
+            : "cash_expense",
       import_source_id: null,
       external_row_key: null,
       statement_month: date.slice(0, 7),
@@ -620,6 +634,9 @@ export default function Page() {
     setEditAccountId(t.payment_account_id || "");
     setEditMerchantName(t.merchant_name || "");
     setEditMemo(t.description || "");
+    setEditDirection(
+      (t.direction as "expense" | "income") || "expense"
+    );
   };
 
   const saveEditTransaction = async (id: string) => {
@@ -644,6 +661,7 @@ export default function Page() {
         merchant_name: editMerchantName || null,
         description: editMemo || null,
         statement_month: editDate.slice(0, 7),
+        direction: editDirection,
       })
       .eq("id", id);
 
@@ -1124,6 +1142,7 @@ export default function Page() {
             >
               <option value="expense">支出</option>
               <option value="income">収入</option>
+              <option value="transfer">資金移動</option>
             </select>
           </div>
 
@@ -1428,6 +1447,7 @@ export default function Page() {
                 <thead>
                   <tr style={{ background: "#1f2937" }}>
                     <th style={th}>日付</th>
+                    <th style={th}>区分</th>
                     <th style={th}>金額</th>
                     <th style={th}>費目</th>
                     <th style={th}>支払元</th>
@@ -1463,6 +1483,26 @@ export default function Page() {
                             />
                           ) : (
                             t.txn_date
+                          )}
+                        </td>
+
+                        <td style={td}>
+                          {isEditing ? (
+                            <select
+                              value={editDirection}
+                              onChange={(e) =>
+                                setEditDirection(e.target.value as "expense" | "income")
+                              }
+                              style={{ padding: "6px" }}
+                            >
+                              <option value="expense">支出</option>
+                              <option value="income">収入</option>
+                              <option value="transfer">資金移動</option>
+                            </select>
+                          ) : t.direction === "income" ? (
+                            "収入"
+                          ) : (
+                            "支出"
                           )}
                         </td>
 

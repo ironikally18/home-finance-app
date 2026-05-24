@@ -13,9 +13,9 @@ type Row = {
   amount: number;
   direction: string;
   categories:
-    | { major_category: string; minor_category: string }
-    | { major_category: string; minor_category: string }[]
-    | null;
+  | { major_category: string; minor_category: string }
+  | { major_category: string; minor_category: string }[]
+  | null;
 };
 
 export default function SummaryPage() {
@@ -67,111 +67,112 @@ export default function SummaryPage() {
 
       if (r.direction === "income") {
         income += amount;
-        return;
-      }
-
-      if (r.direction === "expense") {
+      } else {
         expense += amount;
-
-        const cat = Array.isArray(r.categories)
-          ? r.categories[0]
-          : r.categories;
-
-        const name = cat
-          ? `${cat.major_category} / ${cat.minor_category}`
-          : "未分類";
-
-        categoryMap.set(name, (categoryMap.get(name) || 0) + amount);
       }
-    });
+    
+    if (r.direction === "expense") {
+      expense += amount;
 
-    const categories = Array.from(categoryMap.entries())
-      .map(([name, amount]) => ({ name, amount }))
-      .sort((a, b) => b.amount - a.amount);
+      const cat = Array.isArray(r.categories)
+        ? r.categories[0]
+        : r.categories;
 
-    return {
-      income,
-      expense,
-      balance: income - expense,
-      categories,
-    };
-  }, [rows]);
+      const name = cat
+        ? `${cat.major_category} / ${cat.minor_category}`
+        : "未分類";
 
-  return (
+      categoryMap.set(name, (categoryMap.get(name) || 0) + amount);
+    }
+  });
+
+  const categories = Array.from(categoryMap.entries())
+    .map(([name, amount]) => ({ name, amount }))
+    .sort((a, b) => b.amount - a.amount);
+
+  return {
+    income,
+    expense,
+    balance: income - expense,
+    categories,
+  };
+}, [rows]);
+
+return (
+  <div
+    style={{
+      maxWidth: "720px",
+      margin: "0 auto",
+      padding: "16px",
+      paddingBottom: "88px",
+      background: "#111827",
+      minHeight: "100vh",
+      color: "#f9fafb",
+    }}
+  >
+    <h1 style={{ fontSize: "24px", fontWeight: "bold" }}>月別集計</h1>
+
+    <div style={{ marginBottom: "16px" }}>
+      <div style={{ marginBottom: "4px" }}>対象月</div>
+      <input
+        type="month"
+        value={month}
+        onChange={(e) => setMonth(e.target.value)}
+        style={{
+          width: "100%",
+          padding: "10px",
+          background: "#1f2937",
+          color: "#f9fafb",
+          border: "1px solid #374151",
+          borderRadius: "8px",
+        }}
+      />
+    </div>
+
     <div
       style={{
-        maxWidth: "720px",
-        margin: "0 auto",
-        padding: "16px",
-        paddingBottom: "88px",
-        background: "#111827",
-        minHeight: "100vh",
-        color: "#f9fafb",
+        display: "grid",
+        gridTemplateColumns: "repeat(3, 1fr)",
+        gap: "8px",
+        marginBottom: "16px",
       }}
     >
-      <h1 style={{ fontSize: "24px", fontWeight: "bold" }}>月別集計</h1>
+      <Box title="収入" value={summary.income} />
+      <Box title="支出" value={summary.expense} />
+      <Box title="差額" value={summary.balance} />
+    </div>
 
-      <div style={{ marginBottom: "16px" }}>
-        <div style={{ marginBottom: "4px" }}>対象月</div>
-        <input
-          type="month"
-          value={month}
-          onChange={(e) => setMonth(e.target.value)}
+    <h2 style={{ fontSize: "18px", marginTop: "20px" }}>費目別支出</h2>
+
+    <div style={{ display: "grid", gap: "8px" }}>
+      {summary.categories.length === 0 && <div>データがありません。</div>}
+
+      {summary.categories.map((c) => (
+        <div
+          key={c.name}
           style={{
-            width: "100%",
-            padding: "10px",
-            background: "#1f2937",
-            color: "#f9fafb",
+            display: "flex",
+            justifyContent: "space-between",
+            gap: "12px",
             border: "1px solid #374151",
             borderRadius: "8px",
+            padding: "10px",
+            background: "#1f2937",
           }}
-        />
-      </div>
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(3, 1fr)",
-          gap: "8px",
-          marginBottom: "16px",
-        }}
-      >
-        <Box title="収入" value={summary.income} />
-        <Box title="支出" value={summary.expense} />
-        <Box title="差額" value={summary.balance} />
-      </div>
-
-      <h2 style={{ fontSize: "18px", marginTop: "20px" }}>費目別支出</h2>
-
-      <div style={{ display: "grid", gap: "8px" }}>
-        {summary.categories.length === 0 && <div>データがありません。</div>}
-
-        {summary.categories.map((c) => (
-          <div
-            key={c.name}
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              gap: "12px",
-              border: "1px solid #374151",
-              borderRadius: "8px",
-              padding: "10px",
-              background: "#1f2937",
-            }}
-          >
-            <div>{c.name}</div>
-            <div style={{ fontWeight: "bold", whiteSpace: "nowrap" }}>
-              {c.amount.toLocaleString()}円
-            </div>
+        >
+          <div>{c.name}</div>
+          <div style={{ fontWeight: "bold", whiteSpace: "nowrap" }}>
+            {c.amount.toLocaleString()}円
           </div>
-        ))}
-      </div>
-
-      {message && <div style={{ marginTop: "12px" }}>{message}</div>}
-
-      <BottomNav />
+        </div>
+      ))}
     </div>
-  );
+
+    {message && <div style={{ marginTop: "12px" }}>{message}</div>}
+
+    <BottomNav />
+  </div>
+);
 }
 
 function Box({ title, value }: { title: string; value: number }) {
