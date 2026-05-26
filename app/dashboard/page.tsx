@@ -278,7 +278,7 @@ export default function DashboardPage() {
     };
   }, [items]);
 
-  
+
   const engelTone =
     summary.engel <= 25 ? "good" : summary.engel <= 35 ? "warn" : "bad";
 
@@ -449,7 +449,7 @@ export default function DashboardPage() {
               <div className="mt-3">
                 <div className="text-sm font-bold">食費扱い</div>
                 <div className="mt-1 flex flex-wrap gap-2">
-                  {DASHBOARD_GROUPS.food.categories.map((c) => (
+                  {DASHBOARD_GROUPS.food.majorCategories.map((c) => (
                     <span
                       key={c}
                       className="rounded-full bg-blue-50 px-3 py-1 text-sm text-blue-700"
@@ -466,7 +466,7 @@ export default function DashboardPage() {
                   {FIXED_GROUP_KEYS.map((key) =>
                     DASHBOARD_GROUPS[
                       key as keyof typeof DASHBOARD_GROUPS
-                    ].categories.map((c) => (
+                    ].majorCategories.map((c) => (
                       <span
                         key={c}
                         className="rounded-full bg-gray-100 px-3 py-1 text-sm text-gray-700"
