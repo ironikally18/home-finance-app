@@ -11,130 +11,71 @@ type Txn = {
   direction: "income" | "expense";
   category_id: string | null;
   categories:
-    | {
-        major_category: string | null;
-        minor_category: string | null;
-      }
-    | {
-        major_category: string | null;
-        minor_category: string | null;
-      }[]
-    | null;
+  | {
+    major_category: string | null;
+    minor_category: string | null;
+  }
+  | {
+    major_category: string | null;
+    minor_category: string | null;
+  }[]
+  | null;
 };
 
 const DASHBOARD_GROUPS = {
   food: {
     label: "食費",
-    categories: [
-      "飲食費 / 食材",
-      "飲食費 / 外食",
-      "飲食費 / 嗜好品",
-      "飲食費 / 飲料",
-    ],
+    majorCategories: ["飲食費"],
   },
 
   utilities: {
     label: "水道光熱費",
-    categories: [
-      "水道光熱費 / 電気",
-      "水道光熱費 / ガス",
-      "水道光熱費 / 水道",
-    ],
+    majorCategories: ["水道光熱費"],
   },
 
   communication: {
     label: "通信費",
-    categories: [
-      "通信費 / 携帯",
-      "通信費 / インターネット",
-    ],
-  },
-
-  car: {
-    label: "車関連",
-    categories: [
-      "車関連 / ガソリン",
-      "車関連 / ETC",
-      "車関連 / 駐車場",
-      "車関連 / 整備",
-      "車関連 / 保険",
-      "車関連 / 税金",
-    ],
-  },
-
-  bike: {
-    label: "バイク関連",
-    categories: [
-      "バイク関連 / ガソリン",
-      "バイク関連 / 整備",
-      "バイク関連 / 保険",
-      "バイク関連 / 税金",
-      "バイク関連 / 駐輪場",
-    ],
-  },
-
-  medical: {
-    label: "医療費",
-    categories: [
-      "医療 / 歯科",
-      "医療 / 整体",
-      "医療 / 小児医療外",
-    ],
-  },
-
-  transport: {
-    label: "交通費",
-    categories: [
-      "交通費 / 電車",
-      "交通費 / 通勤バス",
-      "交通費 / 私用1",
-      "交通費 / 私用2",
-    ],
-  },
-
-  insurance: {
-    label: "保険",
-    categories: [
-      "保険 / 火災共済",
-      "車関連 / 保険",
-      "バイク関連 / 保険",
-    ],
+    majorCategories: ["通信費"],
   },
 
   daily: {
     label: "日用品",
-    categories: [
-      "日用品 / 生活消耗品",
-      "日用品 / 生活用品",
-      "日用品 / ドラッグストア",
-      "日用品 / 他",
-    ],
+    majorCategories: ["日用品"],
   },
 
-  education: {
-    label: "教育・学び",
-    categories: [
-      "果恩 / 学校・学び関連購入",
-      "果恩 / 習いごと",
-    ],
+  medical: {
+    label: "医療費",
+    majorCategories: ["医療"],
+  },
+
+  transport: {
+    label: "交通費",
+    majorCategories: ["交通費"],
   },
 
   entertainment: {
     label: "娯楽",
-    categories: [
-      "娯楽 / 入場料",
-    ],
+    majorCategories: ["娯楽"],
   },
 
-  transfer: {
-    label: "資金移動",
-    categories: [
-      "資金移動 / Suicaチャージ",
-      "資金移動 / 楽天キャッシュチャージ",
-      "資金移動 / PayPayチャージ",
-      "資金移動 / 口座間移動",
-      "資金移動 / カード引落",
-    ],
+  education: {
+    label: "教育・学び",
+    majorCategories: ["果恩"],
+  },
+
+  car: {
+    label: "車関連",
+    majorCategories: ["車関連"],
+  },
+
+  bike: {
+    label: "バイク関連",
+    majorCategories: ["バイク関連"],
+  },
+
+  insurance: {
+    label: "保険",
+    majorCategories: ["保険"],
   },
 };
 
@@ -165,6 +106,14 @@ function categoryLabel(x: Txn) {
   if (major) return major;
   if (minor) return minor;
   return "";
+}
+
+function majorCategory(x: Txn) {
+  const raw = x.categories;
+
+  const cat = Array.isArray(raw) ? raw[0] : raw;
+
+  return cat?.major_category?.trim() ?? "";
 }
 
 function thisMonth() {
@@ -284,7 +233,7 @@ export default function DashboardPage() {
           .filter(
             (x) =>
               x.direction === "expense" &&
-              group.categories.includes(categoryLabel(x))
+              group.majorCategories.includes(majorCategory(x))
           )
           .reduce((s, x) => s + Number(x.amount || 0), 0);
 
