@@ -489,21 +489,43 @@ export default function DashboardPage() {
 
 function BottomNav() {
   return (
-    <nav className="fixed bottom-0 left-0 right-0 border-t bg-white/95 shadow-lg">
-      <div className="mx-auto grid max-w-5xl grid-cols-4 text-center text-xs font-bold">
-        <Link href="/" className="py-3">
-          入力
-        </Link>
-        <Link href="/monthly" className="py-3">
-          月別
-        </Link>
-        <Link href="/graphs" className="py-3">
-          グラフ
-        </Link>
-        <Link href="/dashboard" className="py-3 text-blue-600">
-          指標
-        </Link>
-      </div>
-    </nav>
+    <div
+      style={{
+        position: "fixed",
+        left: 0,
+        right: 0,
+        bottom: 0,
+        background: "#020617",
+        borderTop: "1px solid #374151",
+        display: "grid",
+        gridTemplateColumns: "repeat(6, 1fr)",
+        padding: "4px 2px",
+        zIndex: 50,
+      }}
+    >
+      <Nav href="/" label="🏠" />
+      <Nav href="/summary" label="📊" />
+      <Nav href="/graph" label="📈" />
+      <Nav href="/calendar" label="📅" />
+      <Nav href="/dashboard" label="指標" />
+      <Nav href="/kids" label="👦" />
+    </div>
+  );
+}
+
+function Nav({ href, label }: { href: string; label: string }) {
+  return (
+    <a
+      href={href}
+      style={{
+        textAlign: "center",
+        color: "#f9fafb",
+        textDecoration: "none",
+        fontSize: "13px",
+        padding: "8px 4px",
+      }}
+    >
+      {label}
+    </a>
   );
 }
