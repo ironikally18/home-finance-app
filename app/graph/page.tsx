@@ -309,15 +309,17 @@ function BottomNav() {
         background: "#020617",
         borderTop: "1px solid #374151",
         display: "grid",
-        gridTemplateColumns: "repeat(4, 1fr)",
-        padding: "8px",
+        gridTemplateColumns: "repeat(6, 1fr)",
+        padding: "4px 2px",
         zIndex: 50,
       }}
     >
-      <Nav href="/" label="入力" />
-      <Nav href="/summary" label="集計" />
-      <Nav href="/graph" label="グラフ" />
-      <Nav href="/kids" label="子供" />
+      <Nav href="/" label="🏠" />
+      <Nav href="/summary" label="📊" />
+      <Nav href="/graph" label="📈" />
+      <Nav href="/calendar" label="📅" />
+      <Nav href="/dashboard" label="指標" />
+      <Nav href="/kids" label="👦" />
     </div>
   );
 }
