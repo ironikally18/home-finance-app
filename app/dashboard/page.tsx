@@ -278,6 +278,7 @@ export default function DashboardPage() {
     };
   }, [items]);
 
+  
   const engelTone =
     summary.engel <= 25 ? "good" : summary.engel <= 35 ? "warn" : "bad";
 
