@@ -77,6 +77,15 @@ type MerchantMasterRow = {
   display_order: number;
 };
 
+function costKindLabel(value: string | null | undefined) {
+  if (value === "fixed") return "固定費";
+  if (value === "semi") return "準固定費";
+  if (value === "variable") return "変動費";
+  if (value === "exclude") return "対象外";
+
+  return "未設定";
+}
+
 export default function Page() {
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -1985,17 +1994,22 @@ export default function Page() {
                           <select
                             value={editCategoryKind}
                             onChange={(e) => setEditCategoryKind(e.target.value)}
-                            style={{ width: "100%", padding: "6px" }}
+                            style={{
+                              width: "100%",
+                              padding: "8px",
+                              borderRadius: "10px",
+                              border: "1px solid #d1d5db",
+                              background: "#fff",
+                            }}
                           >
-                            <option value="expense_normal">expense_normal</option>
-                            <option value="expense_special">expense_special</option>
-                            <option value="income">income</option>
-                            <option value="transfer">transfer</option>
-                            <option value="charge">charge</option>
+                            <option value="fixed">固定費</option>
+                            <option value="semi">準固定費</option>
+                            <option value="variable">変動費</option>
+                            <option value="exclude">対象外</option>
                           </select>
                         </div>
                       ) : (
-                        `[${c.wallet_type}] ${c.major_category} / ${c.minor_category}`
+                        `[${c.wallet_type}] ${c.major_category} / ${c.minor_category}（${costKindLabel(c.category_kind)}）`
                       )}
                     </div>
 
