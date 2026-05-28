@@ -162,7 +162,7 @@ export default function Page() {
   const [newCategoryWalletType, setNewCategoryWalletType] = useState("household");
   const [newMajorCategory, setNewMajorCategory] = useState("");
   const [newMinorCategory, setNewMinorCategory] = useState("");
-  const [newCategoryKind, setNewCategoryKind] = useState("expense_normal");
+  const [newCategoryKind, setNewCategoryKind] = useState("variable");
 
   const [keepPreviousInput, setKeepPreviousInput] = useState(true);
   const [entryDirection, setEntryDirection] =
@@ -359,29 +359,32 @@ export default function Page() {
   }, [accounts, walletId]);
 
   const filteredCategories = useMemo(() => {
-    const walletType = selectedWallet?.wallet_type || "household";
+  const walletType = selectedWallet?.wallet_type || "household";
 
-    return categories.filter((c) => {
-      const walletOk = c.wallet_type === walletType || c.wallet_type === null;
+  return categories.filter((c) => {
+    const walletOk = c.wallet_type === walletType || c.wallet_type === null;
 
-      if (entryDirection === "income") {
-        return walletOk && c.category_kind === "income";
-      }
-
-      if (entryDirection === "transfer") {
-        return (
-          walletOk &&
-          (c.category_kind === "transfer" || c.category_kind === "charge")
-        );
-      }
-
+    if (entryDirection === "income") {
       return (
         walletOk &&
-        (c.category_kind === "expense_normal" ||
-          c.category_kind === "expense_special")
+        (c.major_category === "収入" ||
+          c.major_category === "おこづかい収入")
       );
-    });
-  }, [categories, selectedWallet, entryDirection]);
+    }
+
+    if (entryDirection === "transfer") {
+      return walletOk && c.major_category === "資金移動";
+    }
+
+    return (
+      walletOk &&
+      c.major_category !== "収入" &&
+      c.major_category !== "おこづかい収入" &&
+      c.major_category !== "資金移動" &&
+      c.category_kind !== "exclude"
+    );
+  });
+}, [categories, selectedWallet, entryDirection]);
 
   const listTotalAmount = useMemo(() => {
     return transactions.reduce((sum, row) => {
@@ -913,7 +916,7 @@ export default function Page() {
     setEditCategoryWalletType(c.wallet_type || "household");
     setEditCategoryMajor(c.major_category);
     setEditCategoryMinor(c.minor_category);
-    setEditCategoryKind(c.category_kind);
+    setEditCategoryKind(c.category_kind || "variable");
   };
 
   const saveEditCategory = async (id: string) => {
@@ -937,7 +940,7 @@ export default function Page() {
     setEditCategoryWalletType("household");
     setEditCategoryMajor("");
     setEditCategoryMinor("");
-    setEditCategoryKind("expense_normal");
+    setEditCategoryKind("variable");
     await loadData();
   };
 
@@ -1161,7 +1164,7 @@ export default function Page() {
             <select
               value={entryDirection}
               onChange={(e) => {
-                setEntryDirection(e.target.value as "expense" | "income");
+                setEntryDirection(e.target.value as "expense" | "income" | "transfer");
                 setCategoryId("");
               }}
               style={{ width: "100%", padding: "8px" }}
@@ -1181,6 +1184,7 @@ export default function Page() {
               style={{ width: "100%", padding: "8px" }}
             />
           </div>
+          
 
           <div>
             <div style={{ marginBottom: "4px" }}>金額</div>
