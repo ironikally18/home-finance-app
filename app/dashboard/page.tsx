@@ -95,6 +95,14 @@ function yen(n: number) {
   return `${Math.round(n).toLocaleString()}円`;
 }
 
+function costKindLabel(value: string | null | undefined) {
+  if (value === "fixed") return "固定費";
+  if (value === "semi") return "準固定費";
+  if (value === "variable") return "変動費";
+  if (value === "exclude") return "対象外";
+  return "未設定";
+}
+
 function pct(n: number) {
   if (!Number.isFinite(n)) return "0.0%";
   return `${n.toFixed(1)}%`;
