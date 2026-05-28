@@ -1808,17 +1808,23 @@ export default function Page() {
               </div>
 
               <div>
-                <div style={{ marginBottom: "4px" }}>種類</div>
+                <div style={{ marginBottom: "4px" }}>指標分類</div>
+
                 <select
                   value={newCategoryKind}
                   onChange={(e) => setNewCategoryKind(e.target.value)}
-                  style={{ width: "100%", padding: "8px" }}
+                  style={{
+                    width: "100%",
+                    padding: "10px",
+                    borderRadius: "10px",
+                    border: "1px solid #d1d5db",
+                    background: "#fff",
+                  }}
                 >
-                  <option value="expense_normal">expense_normal</option>
-                  <option value="expense_special">expense_special</option>
-                  <option value="income">income</option>
-                  <option value="transfer">transfer</option>
-                  <option value="charge">charge</option>
+                  <option value="fixed">固定費</option>
+                  <option value="semi">準固定費</option>
+                  <option value="variable">変動費</option>
+                  <option value="exclude">対象外</option>
                 </select>
               </div>
 

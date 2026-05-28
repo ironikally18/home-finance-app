@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 
+type CostClass = "fixed" | "semi" | "variable" | "exclude";
+
 type Txn = {
   id: string;
   txn_date: string;
@@ -12,12 +14,16 @@ type Txn = {
   category_id: string | null;
   categories:
   | {
+    id: string;
     major_category: string | null;
     minor_category: string | null;
+    category_kind: CostClass | null;
   }
   | {
+    id: string;
     major_category: string | null;
     minor_category: string | null;
+    category_kind: CostClass | null;
   }[]
   | null;
 };
@@ -181,8 +187,10 @@ export default function DashboardPage() {
     direction,
     category_id,
     categories (
+      id,
       major_category,
-      minor_category
+      minor_category,
+      category_kind
     )
   `)
       .gte("txn_date", from)
@@ -197,6 +205,13 @@ export default function DashboardPage() {
     }
 
     setLoading(false);
+  }
+
+  function costClassOf(x: Txn): CostClass {
+    const raw = x.categories;
+    const cat = Array.isArray(raw) ? raw[0] : raw;
+
+    return cat?.category_kind ?? "variable";
   }
 
   function saveVirtualRent(value: number) {
@@ -261,6 +276,40 @@ export default function DashboardPage() {
     const simulatedSavingRate =
       income > 0 ? (simulatedBalance / income) * 100 : 0;
 
+    const classifiedTotals = items
+      .filter((x) => x.direction === "expense")
+      .reduce(
+        (acc, x) => {
+          const cls = costClassOf(x);
+          const amount = Number(x.amount || 0);
+
+          if (cls === "fixed") acc.fixed += amount;
+          if (cls === "semi") acc.semi += amount;
+          if (cls === "variable") acc.variable += amount;
+
+          return acc;
+        },
+        { fixed: 0, semi: 0, variable: 0 }
+      );
+
+    const fixedExpenseByClass = classifiedTotals.fixed;
+    const semiFixedExpense = classifiedTotals.semi;
+    const variableExpense = classifiedTotals.variable;
+
+    const fixedRateByClass =
+      income > 0 ? (fixedExpenseByClass / income) * 100 : 0;
+
+    const semiFixedRate =
+      income > 0 ? (semiFixedExpense / income) * 100 : 0;
+
+    const variableRate =
+      income > 0 ? (variableExpense / income) * 100 : 0;
+
+    const livingCostRate =
+      income > 0
+        ? ((fixedExpenseByClass + semiFixedExpense) / income) * 100
+        : 0;
+
     return {
       income,
       expense,
@@ -275,6 +324,13 @@ export default function DashboardPage() {
       simulatedBalance,
       simulatedEngel,
       simulatedSavingRate,
+      fixedExpenseByClass,
+      semiFixedExpense,
+      variableExpense,
+      fixedRateByClass,
+      semiFixedRate,
+      variableRate,
+      livingCostRate,
     };
   }, [items]);
 
@@ -359,6 +415,30 @@ export default function DashboardPage() {
                 title="今月の収支"
                 value={yen(summary.balance)}
                 tone={summary.balance >= 0 ? "good" : "bad"}
+              />
+
+              <Card
+                title="固定費"
+                value={yen(summary.fixedExpenseByClass)}
+                note={`収入比 ${pct(summary.fixedRateByClass)}`}
+              />
+
+              <Card
+                title="準固定費"
+                value={yen(summary.semiFixedExpense)}
+                note={`収入比 ${pct(summary.semiFixedRate)}`}
+              />
+
+              <Card
+                title="変動費"
+                value={yen(summary.variableExpense)}
+                note={`収入比 ${pct(summary.variableRate)}`}
+              />
+
+              <Card
+                title="生活維持費率"
+                value={pct(summary.livingCostRate)}
+                note="固定費 + 準固定費 ÷ 収入"
               />
 
               <Card
