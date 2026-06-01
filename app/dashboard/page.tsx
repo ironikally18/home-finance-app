@@ -342,6 +342,45 @@ export default function DashboardPage() {
     };
   }, [items]);
 
+  async function copyAiReport() {
+    const report = `
+家計分析をお願いします。
+
+【対象月】
+${month}
+
+【実家計】
+収入: ${yen(summary.income)}
+支出: ${yen(summary.expense)}
+収支: ${yen(summary.balance)}
+貯蓄率: ${pct(summary.savingRate)}
+
+【仮想家賃込み】
+仮想家賃: ${yen(virtualRent)}
+仮想家賃込み支出: ${yen(summary.simulatedExpense)}
+補正後収支: ${yen(summary.simulatedBalance)}
+補正貯蓄率: ${pct(summary.simulatedSavingRate)}
+補正エンゲル係数: ${pct(summary.simulatedEngel)}
+
+【支出分類】
+食費: ${yen(summary.foodExpense)}
+固定費: ${yen(summary.fixedExpenseByClass)}
+準固定費: ${yen(summary.semiFixedExpense)}
+変動費: ${yen(summary.variableExpense)}
+生活維持費率: ${pct(summary.livingCostRate)}
+
+【お願いしたい分析】
+1. 支出が多い原因
+2. 無駄遣いの可能性がある項目
+3. 固定費・準固定費・変動費で見直す順番
+4. 仮想家賃込みで黒字化するための改善案
+5. 来月からできる具体的な対策
+`.trim();
+
+    await navigator.clipboard.writeText(report);
+    alert("AI分析用レポートをコピーしました。ChatGPTに貼り付けてください。");
+  }
+
 
   const engelTone =
     summary.engel <= 25 ? "good" : summary.engel <= 35 ? "warn" : "bad";
@@ -529,6 +568,20 @@ export default function DashboardPage() {
                 <div>固定費率：35%以下 良好 / 50%超 注意</div>
                 <div>貯蓄率：20%以上 良好 / 0%未満 赤字</div>
               </div>
+            </section>
+
+            <section className="mt-4 rounded-2xl border bg-white p-4 shadow-sm">
+              <h2 className="text-lg font-bold">AI分析</h2>
+              <p className="mt-1 text-sm text-gray-600">
+                今月の家計データをChatGPTへ貼り付けやすい形でコピーします。
+              </p>
+
+              <button
+                onClick={copyAiReport}
+                className="mt-3 w-full rounded-xl bg-gray-900 px-4 py-3 font-bold text-white"
+              >
+                AI分析用レポートをコピー
+              </button>
             </section>
 
             <section className="mt-4 rounded-2xl border bg-white p-4 shadow-sm">
