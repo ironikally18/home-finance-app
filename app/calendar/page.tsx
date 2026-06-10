@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, User } from "@supabase/supabase-js";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL || "",
@@ -16,9 +16,9 @@ type Row = {
   merchant_name: string | null;
   description: string | null;
   categories:
-    | { major_category: string; minor_category: string }
-    | { major_category: string; minor_category: string }[]
-    | null;
+  | { major_category: string; minor_category: string }
+  | { major_category: string; minor_category: string }[]
+  | null;
 };
 
 export default function CalendarPage() {
@@ -26,13 +26,50 @@ export default function CalendarPage() {
   const [rows, setRows] = useState<Row[]>([]);
   const [selectedDate, setSelectedDate] = useState("");
   const [message, setMessage] = useState("");
+  const [user, setUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
 
   useEffect(() => {
-    void loadData();
-  }, [month]);
+    const init = async () => {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      setUser(session?.user ?? null);
+      setAuthLoading(false);
+    };
+
+    void init();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (user) {
+      void loadData();
+    }
+  }, [user, month]);
 
   const loadData = async () => {
     setMessage("");
+
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session?.user) {
+      setMessage("ログインしてください");
+      setRows([]);
+      return;
+    }
 
     const from = `${month}-01`;
     const dt = new Date(`${month}-01T00:00:00`);
@@ -53,6 +90,7 @@ export default function CalendarPage() {
           minor_category
         )
       `)
+      .eq("user_id", session.user.id)
       .gte("txn_date", from)
       .lt("txn_date", to)
       .order("txn_date", { ascending: true });
@@ -115,6 +153,14 @@ export default function CalendarPage() {
     setMonth(next);
     setSelectedDate("");
   };
+
+  if (authLoading) {
+    return <div style={{ padding: "16px" }}>読み込み中...</div>;
+  }
+
+  if (!user) {
+    return <div style={{ padding: "16px" }}>ログインしてください</div>;
+  }
 
   return (
     <div
@@ -210,10 +256,10 @@ export default function CalendarPage() {
                   expense >= 10000
                     ? "#7f1d1d"
                     : expense > 0
-                    ? "#1f2937"
-                    : income > 0
-                    ? "#064e3b"
-                    : "#111827",
+                      ? "#1f2937"
+                      : income > 0
+                        ? "#064e3b"
+                        : "#111827",
                 color: "#f9fafb",
                 textAlign: "left",
               }}

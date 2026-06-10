@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, User } from "@supabase/supabase-js";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL || "",
@@ -22,13 +22,49 @@ export default function SummaryPage() {
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
   const [rows, setRows] = useState<Row[]>([]);
   const [message, setMessage] = useState("");
+  const [user, setUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
 
   useEffect(() => {
-    void loadData();
-  }, [month]);
+    const init = async () => {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      setUser(session?.user ?? null);
+      setAuthLoading(false);
+    };
+
+    void init();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (user) {
+      void loadData();
+    }
+  }, [user, month]);
 
   const loadData = async () => {
     setMessage("");
+
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session?.user) {
+      window.location.href = "/";
+      return;
+    }
 
     const from = `${month}-01`;
     const dt = new Date(`${month}-01T00:00:00`);
@@ -46,8 +82,10 @@ export default function SummaryPage() {
           minor_category
         )
       `)
+      .eq("user_id", session.user.id)
       .gte("txn_date", from)
-      .lt("txn_date", to);
+      .lt("txn_date", to)
+      .order("txn_date", { ascending: true });
 
     if (error) {
       setMessage("読込エラー: " + error.message);
@@ -99,6 +137,14 @@ export default function SummaryPage() {
       categories,
     };
   }, [rows]);
+
+  if (authLoading) {
+    return <div style={{ padding: "16px" }}>読み込み中...</div>;
+  }
+
+  if (!user) {
+    return <div style={{ padding: "16px" }}>ログインしてください</div>;
+  }
 
   return (
     <div
