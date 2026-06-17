@@ -359,32 +359,32 @@ export default function Page() {
   }, [accounts, walletId]);
 
   const filteredCategories = useMemo(() => {
-  const walletType = selectedWallet?.wallet_type || "household";
+    const walletType = selectedWallet?.wallet_type || "household";
 
-  return categories.filter((c) => {
-    const walletOk = c.wallet_type === walletType || c.wallet_type === null;
+    return categories.filter((c) => {
+      const walletOk = c.wallet_type === walletType || c.wallet_type === null;
 
-    if (entryDirection === "income") {
+      if (entryDirection === "income") {
+        return (
+          walletOk &&
+          (c.major_category === "収入" ||
+            c.major_category === "おこづかい収入")
+        );
+      }
+
+      if (entryDirection === "transfer") {
+        return walletOk && c.major_category === "資金移動";
+      }
+
       return (
         walletOk &&
-        (c.major_category === "収入" ||
-          c.major_category === "おこづかい収入")
+        c.major_category !== "収入" &&
+        c.major_category !== "おこづかい収入" &&
+        c.major_category !== "資金移動" &&
+        c.category_kind !== "exclude"
       );
-    }
-
-    if (entryDirection === "transfer") {
-      return walletOk && c.major_category === "資金移動";
-    }
-
-    return (
-      walletOk &&
-      c.major_category !== "収入" &&
-      c.major_category !== "おこづかい収入" &&
-      c.major_category !== "資金移動" &&
-      c.category_kind !== "exclude"
-    );
-  });
-}, [categories, selectedWallet, entryDirection]);
+    });
+  }, [categories, selectedWallet, entryDirection]);
 
   const listTotalAmount = useMemo(() => {
     return transactions.reduce((sum, row) => {
@@ -727,14 +727,20 @@ export default function Page() {
   };
 
   const moveAccount = async (id: string, direction: "up" | "down") => {
-    const index = accounts.findIndex((x) => x.id === id);
+    const current = accounts.find((x) => x.id === id);
+    if (!current) return;
+
+    const sameGroup = accounts
+      .filter((x) => x.wallet_id === current.wallet_id)
+      .sort((a, b) => (a.display_order ?? 999) - (b.display_order ?? 999));
+
+    const index = sameGroup.findIndex((x) => x.id === id);
     if (index < 0) return;
 
     const targetIndex = direction === "up" ? index - 1 : index + 1;
-    if (targetIndex < 0 || targetIndex >= accounts.length) return;
+    if (targetIndex < 0 || targetIndex >= sameGroup.length) return;
 
-    const current = accounts[index] as AccountRow & { display_order?: number };
-    const target = accounts[targetIndex] as AccountRow & { display_order?: number };
+    const target = sameGroup[targetIndex];
 
     const currentOrder = current.display_order ?? index + 1;
     const targetOrder = target.display_order ?? targetIndex + 1;
@@ -759,18 +765,29 @@ export default function Page() {
       return;
     }
 
+    setMasterMessage("支払元の並び順を変更しました");
     await loadData();
   };
 
   const moveCategory = async (id: string, direction: "up" | "down") => {
-    const index = categories.findIndex((x) => x.id === id);
+    const current = categories.find((x) => x.id === id);
+    if (!current) return;
+
+    const sameGroup = categories
+      .filter(
+        (x) =>
+          x.wallet_type === current.wallet_type &&
+          x.major_category === current.major_category
+      )
+      .sort((a, b) => (a.display_order ?? 999) - (b.display_order ?? 999));
+
+    const index = sameGroup.findIndex((x) => x.id === id);
     if (index < 0) return;
 
     const targetIndex = direction === "up" ? index - 1 : index + 1;
-    if (targetIndex < 0 || targetIndex >= categories.length) return;
+    if (targetIndex < 0 || targetIndex >= sameGroup.length) return;
 
-    const current = categories[index] as CategoryRow & { display_order?: number };
-    const target = categories[targetIndex] as CategoryRow & { display_order?: number };
+    const target = sameGroup[targetIndex];
 
     const currentOrder = current.display_order ?? index + 1;
     const targetOrder = target.display_order ?? targetIndex + 1;
@@ -795,6 +812,7 @@ export default function Page() {
       return;
     }
 
+    setMasterMessage("費目の並び順を変更しました");
     await loadData();
   };
 
@@ -891,10 +909,17 @@ export default function Page() {
   };
 
   const saveEditAccount = async (id: string) => {
+    const name = editAccountName.trim();
+
+    if (!name) {
+      setMasterMessage("支払元名を入力してください");
+      return;
+    }
+
     const { error } = await supabase
       .from("accounts")
       .update({
-        account_name: editAccountName.trim(),
+        account_name: name,
         account_type: editAccountType,
       })
       .eq("id", id);
@@ -904,7 +929,7 @@ export default function Page() {
       return;
     }
 
-    setMasterMessage("支払元を更新しました");
+    setMasterMessage(`支払元を更新しました: ${name}`);
     setEditingAccountId(null);
     setEditAccountName("");
     setEditAccountType("cash");
@@ -920,12 +945,20 @@ export default function Page() {
   };
 
   const saveEditCategory = async (id: string) => {
+    const major = editCategoryMajor.trim();
+    const minor = editCategoryMinor.trim();
+
+    if (!major || !minor) {
+      setMasterMessage("大分類と中分類を入力してください");
+      return;
+    }
+
     const { error } = await supabase
       .from("categories")
       .update({
         wallet_type: editCategoryWalletType,
-        major_category: editCategoryMajor.trim(),
-        minor_category: editCategoryMinor.trim(),
+        major_category: major,
+        minor_category: minor,
         category_kind: editCategoryKind,
       })
       .eq("id", id);
@@ -935,12 +968,12 @@ export default function Page() {
       return;
     }
 
-    setMasterMessage("費目を更新しました");
+    setMasterMessage(`費目を更新しました: ${major} / ${minor}`);
     setEditingCategoryId(null);
     setEditCategoryWalletType("household");
     setEditCategoryMajor("");
     setEditCategoryMinor("");
-    setEditCategoryKind("variable");
+    setEditCategoryKind("expense_normal");
     await loadData();
   };
 
@@ -1184,7 +1217,7 @@ export default function Page() {
               style={{ width: "100%", padding: "8px" }}
             />
           </div>
-          
+
 
           <div>
             <div style={{ marginBottom: "4px" }}>金額</div>

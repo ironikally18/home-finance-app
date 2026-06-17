@@ -66,8 +66,7 @@ export default function CalendarPage() {
     } = await supabase.auth.getSession();
 
     if (!session?.user) {
-      setMessage("ログインしてください");
-      setRows([]);
+      window.location.href = "/";
       return;
     }
 
