@@ -67,9 +67,11 @@ export default function SummaryPage() {
     }
 
     const from = `${month}-01`;
-    const dt = new Date(`${month}-01T00:00:00`);
-    const nextMonth = new Date(dt.getFullYear(), dt.getMonth() + 1, 1);
-    const to = nextMonth.toISOString().slice(0, 10);
+    const [y, m] = month.split("-").map(Number);
+    const nextY = m === 12 ? y + 1 : y;
+    const nextM = m === 12 ? 1 : m + 1;
+
+    const to = `${nextY}-${String(nextM).padStart(2, "0")}-01`;
 
     const { data, error } = await supabase
       .from("transaction_records")
