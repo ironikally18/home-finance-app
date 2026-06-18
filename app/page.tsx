@@ -217,11 +217,14 @@ export default function Page() {
     const { data: a, error: aErr } = await supabase
       .from("accounts")
       .select("id, account_name, account_type, wallet_id, display_order")
+      .order("wallet_id", { ascending: true })
       .order("display_order", { ascending: true });
 
     const { data: c, error: cErr } = await supabase
       .from("categories")
       .select("id, wallet_type, major_category, minor_category, category_kind, display_order")
+      .order("wallet_type", { ascending: true })
+      .order("major_category", { ascending: true })
       .order("display_order", { ascending: true });
 
     const { data: mm, error: mmErr } = await supabase
@@ -732,37 +735,31 @@ export default function Page() {
 
     const sameGroup = accounts
       .filter((x) => x.wallet_id === current.wallet_id)
-      .sort((a, b) => (a.display_order ?? 999) - (b.display_order ?? 999));
+      .sort((a, b) => {
+        const orderDiff = (a.display_order ?? 999) - (b.display_order ?? 999);
+        if (orderDiff !== 0) return orderDiff;
+        return a.account_name.localeCompare(b.account_name, "ja");
+      });
 
     const index = sameGroup.findIndex((x) => x.id === id);
-    if (index < 0) return;
-
     const targetIndex = direction === "up" ? index - 1 : index + 1;
-    if (targetIndex < 0 || targetIndex >= sameGroup.length) return;
 
-    const target = sameGroup[targetIndex];
+    if (index < 0 || targetIndex < 0 || targetIndex >= sameGroup.length) return;
 
-    const currentOrder = current.display_order ?? index + 1;
-    const targetOrder = target.display_order ?? targetIndex + 1;
+    const reordered = [...sameGroup];
+    const [moved] = reordered.splice(index, 1);
+    reordered.splice(targetIndex, 0, moved);
 
-    const { error: e1 } = await supabase
-      .from("accounts")
-      .update({ display_order: targetOrder })
-      .eq("id", current.id);
+    for (let i = 0; i < reordered.length; i++) {
+      const { error } = await supabase
+        .from("accounts")
+        .update({ display_order: i + 1 })
+        .eq("id", reordered[i].id);
 
-    if (e1) {
-      setMasterMessage("支払元並び替えエラー: " + e1.message);
-      return;
-    }
-
-    const { error: e2 } = await supabase
-      .from("accounts")
-      .update({ display_order: currentOrder })
-      .eq("id", target.id);
-
-    if (e2) {
-      setMasterMessage("支払元並び替えエラー: " + e2.message);
-      return;
+      if (error) {
+        setMasterMessage("支払元並び替えエラー: " + error.message);
+        return;
+      }
     }
 
     setMasterMessage("支払元の並び順を変更しました");
@@ -779,37 +776,31 @@ export default function Page() {
           x.wallet_type === current.wallet_type &&
           x.major_category === current.major_category
       )
-      .sort((a, b) => (a.display_order ?? 999) - (b.display_order ?? 999));
+      .sort((a, b) => {
+        const orderDiff = (a.display_order ?? 999) - (b.display_order ?? 999);
+        if (orderDiff !== 0) return orderDiff;
+        return a.minor_category.localeCompare(b.minor_category, "ja");
+      });
 
     const index = sameGroup.findIndex((x) => x.id === id);
-    if (index < 0) return;
-
     const targetIndex = direction === "up" ? index - 1 : index + 1;
-    if (targetIndex < 0 || targetIndex >= sameGroup.length) return;
 
-    const target = sameGroup[targetIndex];
+    if (index < 0 || targetIndex < 0 || targetIndex >= sameGroup.length) return;
 
-    const currentOrder = current.display_order ?? index + 1;
-    const targetOrder = target.display_order ?? targetIndex + 1;
+    const reordered = [...sameGroup];
+    const [moved] = reordered.splice(index, 1);
+    reordered.splice(targetIndex, 0, moved);
 
-    const { error: e1 } = await supabase
-      .from("categories")
-      .update({ display_order: targetOrder })
-      .eq("id", current.id);
+    for (let i = 0; i < reordered.length; i++) {
+      const { error } = await supabase
+        .from("categories")
+        .update({ display_order: i + 1 })
+        .eq("id", reordered[i].id);
 
-    if (e1) {
-      setMasterMessage("費目並び替えエラー: " + e1.message);
-      return;
-    }
-
-    const { error: e2 } = await supabase
-      .from("categories")
-      .update({ display_order: currentOrder })
-      .eq("id", target.id);
-
-    if (e2) {
-      setMasterMessage("費目並び替えエラー: " + e2.message);
-      return;
+      if (error) {
+        setMasterMessage("費目並び替えエラー: " + error.message);
+        return;
+      }
     }
 
     setMasterMessage("費目の並び順を変更しました");
@@ -870,35 +861,34 @@ export default function Page() {
   };
 
   const moveMerchantMaster = async (id: string, direction: "up" | "down") => {
-    const index = merchantMasters.findIndex((x) => x.id === id);
-    if (index < 0) return;
+    const sorted = [...merchantMasters].sort((a, b) => {
+      const orderDiff = (a.display_order ?? 999) - (b.display_order ?? 999);
+      if (orderDiff !== 0) return orderDiff;
+      return a.merchant_name.localeCompare(b.merchant_name, "ja");
+    });
 
+    const index = sorted.findIndex((x) => x.id === id);
     const targetIndex = direction === "up" ? index - 1 : index + 1;
-    if (targetIndex < 0 || targetIndex >= merchantMasters.length) return;
 
-    const current = merchantMasters[index];
-    const target = merchantMasters[targetIndex];
+    if (index < 0 || targetIndex < 0 || targetIndex >= sorted.length) return;
 
-    const { error: e1 } = await supabase
-      .from("merchant_masters")
-      .update({ display_order: target.display_order })
-      .eq("id", current.id);
+    const reordered = [...sorted];
+    const [moved] = reordered.splice(index, 1);
+    reordered.splice(targetIndex, 0, moved);
 
-    if (e1) {
-      setMasterMessage("支払先並び替えエラー: " + e1.message);
-      return;
+    for (let i = 0; i < reordered.length; i++) {
+      const { error } = await supabase
+        .from("merchant_masters")
+        .update({ display_order: i + 1 })
+        .eq("id", reordered[i].id);
+
+      if (error) {
+        setMasterMessage("支払先並び替えエラー: " + error.message);
+        return;
+      }
     }
 
-    const { error: e2 } = await supabase
-      .from("merchant_masters")
-      .update({ display_order: current.display_order })
-      .eq("id", target.id);
-
-    if (e2) {
-      setMasterMessage("支払先並び替えエラー: " + e2.message);
-      return;
-    }
-
+    setMasterMessage("支払先候補の並び順を変更しました");
     await loadData();
   };
 
@@ -969,6 +959,7 @@ export default function Page() {
     }
 
     setMasterMessage(`費目を更新しました: ${major} / ${minor}`);
+
     setEditingCategoryId(null);
     setEditCategoryWalletType("household");
     setEditCategoryMajor("");
