@@ -63,6 +63,9 @@ export default function SummaryPage() {
 
     if (!session?.user) {
       window.location.href = "/";
+      setMessage("ログインしてください");
+      setRows([]);
+
       return;
     }
 
