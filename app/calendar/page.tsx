@@ -67,6 +67,9 @@ export default function CalendarPage() {
 
     if (!session?.user) {
       window.location.href = "/";
+      setMessage("ログインしてください");
+      setRows([]);
+
       return;
     }
 
