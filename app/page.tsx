@@ -1072,6 +1072,22 @@ export default function Page() {
     borderBottom: "1px solid #374151",
   };
 
+  const moveButtonStyle: React.CSSProperties = {
+    padding: "8px 12px",
+    minWidth: "56px",
+    background: "#374151",
+    color: "#f9fafb",
+    border: "1px solid #6b7280",
+    borderRadius: "8px",
+    fontSize: "13px",
+    fontWeight: "bold",
+  };
+
+  const disabledMoveButtonStyle: React.CSSProperties = {
+    ...moveButtonStyle,
+    opacity: 0.35,
+  };
+
   return (
     <div style={{ maxWidth: "560px", margin: "0 auto", padding: "16px" }}>
       <div
@@ -1941,17 +1957,27 @@ export default function Page() {
                       )}
 
                       <button
+                        type="button"
                         onClick={async () => await moveAccount(a.id, "up")}
                         disabled={idx === 0}
+                        style={idx === 0 ? disabledMoveButtonStyle : moveButtonStyle}
                       >
-                        ↑
+                        上へ
                       </button>
+
                       <button
+                        type="button"
                         onClick={async () => await moveAccount(a.id, "down")}
                         disabled={idx === accounts.length - 1}
+                        style={
+                          idx === accounts.length - 1
+                            ? disabledMoveButtonStyle
+                            : moveButtonStyle
+                        }
                       >
-                        ↓
+                        下へ
                       </button>
+
                       <button
                         onClick={async () => {
                           await deleteAccount(a.id, a.account_name);
@@ -2052,17 +2078,27 @@ export default function Page() {
                       )}
 
                       <button
+                        type="button"
                         onClick={async () => await moveCategory(c.id, "up")}
                         disabled={idx === 0}
+                        style={idx === 0 ? disabledMoveButtonStyle : moveButtonStyle}
                       >
-                        ↑
+                        上へ
                       </button>
+
                       <button
+                        type="button"
                         onClick={async () => await moveCategory(c.id, "down")}
                         disabled={idx === categories.length - 1}
+                        style={
+                          idx === categories.length - 1
+                            ? disabledMoveButtonStyle
+                            : moveButtonStyle
+                        }
                       >
-                        ↓
+                        下へ
                       </button>
+
                       <button
                         onClick={async () => {
                           await deleteCategory(c.id, c.major_category, c.minor_category);
@@ -2132,17 +2168,27 @@ export default function Page() {
                       )}
 
                       <button
+                        type="button"
                         onClick={async () => await moveMerchantMaster(m.id, "up")}
                         disabled={idx === 0}
+                        style={idx === 0 ? disabledMoveButtonStyle : moveButtonStyle}
                       >
-                        ↑
+                        上へ
                       </button>
+
                       <button
+                        type="button"
                         onClick={async () => await moveMerchantMaster(m.id, "down")}
                         disabled={idx === merchantMasters.length - 1}
+                        style={
+                          idx === merchantMasters.length - 1
+                            ? disabledMoveButtonStyle
+                            : moveButtonStyle
+                        }
                       >
-                        ↓
+                        下へ
                       </button>
+
                       <button
                         onClick={async () => {
                           await deleteMerchantMaster(m.id, m.merchant_name);
