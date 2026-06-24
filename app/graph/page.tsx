@@ -9,7 +9,6 @@ import {
   Legend,
   Line,
   LineChart,
-  ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
@@ -211,14 +210,40 @@ export default function GraphPage() {
 
       <SectionTitle title="全体：費目別の月別支出" />
 
-      <div style={chartBoxStyle}>
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={chartData}>
+      <div style={scrollWrapStyle}>
+        <div style={{ width: Math.max(chartData.length * 80, 600), height: 420 }}>
+          <BarChart
+            width={Math.max(chartData.length * 80, 600)}
+            height={420}
+            data={chartData}
+            margin={{ top: 8, right: 16, left: 8, bottom: 40 }}
+          >
             <CartesianGrid stroke="#374151" />
-            <XAxis dataKey="month" stroke="#f9fafb" />
-            <YAxis stroke="#f9fafb" />
-            <Tooltip />
-            <Legend />
+            <XAxis
+              dataKey="month"
+              stroke="#f9fafb"
+              tick={{ fontSize: 12 }}
+              angle={-40}
+              textAnchor="end"
+              interval={0}
+            />
+            <YAxis
+              stroke="#f9fafb"
+              tick={{ fontSize: 12 }}
+              tickFormatter={(v: number) =>
+                v >= 10000 ? `${(v / 10000).toFixed(0)}万` : String(v)
+              }
+            />
+            <Tooltip
+              contentStyle={{ background: "#1f2937", border: "1px solid #374151", color: "#f9fafb" }}
+              formatter={(value: number, name: string) => [
+                `${Number(value).toLocaleString()}円`,
+                name,
+              ]}
+            />
+            <Legend
+              wrapperStyle={{ paddingTop: "8px", color: "#f9fafb", fontSize: "13px" }}
+            />
             {categoryNames.map((name, index) => (
               <Bar
                 key={name}
@@ -228,7 +253,7 @@ export default function GraphPage() {
               />
             ))}
           </BarChart>
-        </ResponsiveContainer>
+        </div>
       </div>
 
       {selectedCategory && (
@@ -245,24 +270,45 @@ export default function GraphPage() {
             表示期間合計: {selectedCategoryTotal.toLocaleString()}円
           </div>
 
-          <div style={chartBoxStyle}>
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={selectedCategoryData}>
+          <div style={scrollWrapStyle}>
+            <div style={{ width: Math.max(selectedCategoryData.length * 80, 600), height: 360 }}>
+              <LineChart
+                width={Math.max(selectedCategoryData.length * 80, 600)}
+                height={360}
+                data={selectedCategoryData}
+                margin={{ top: 8, right: 16, left: 8, bottom: 40 }}
+              >
                 <CartesianGrid stroke="#374151" />
-                <XAxis dataKey="month" stroke="#f9fafb" />
-                <YAxis stroke="#f9fafb" />
-                <Tooltip />
-                <Legend />
+                <XAxis
+                  dataKey="month"
+                  stroke="#f9fafb"
+                  tick={{ fontSize: 12 }}
+                  angle={-40}
+                  textAnchor="end"
+                  interval={0}
+                />
+                <YAxis
+                  stroke="#f9fafb"
+                  tick={{ fontSize: 12 }}
+                  tickFormatter={(v: number) =>
+                    v >= 10000 ? `${(v / 10000).toFixed(0)}万` : String(v)
+                  }
+                />
+                <Tooltip
+                  contentStyle={{ background: "#1f2937", border: "1px solid #374151", color: "#f9fafb" }}
+                  formatter={(value: number) => [`${Number(value).toLocaleString()}円`, selectedCategory]}
+                />
+                <Legend wrapperStyle={{ paddingTop: "8px", color: "#f9fafb", fontSize: "13px" }} />
                 <Line
                   type="monotone"
                   dataKey="amount"
                   name={selectedCategory}
                   stroke="#60a5fa"
                   strokeWidth={3}
-                  dot={{ r: 4 }}
+                  dot={{ r: 5 }}
                 />
               </LineChart>
-            </ResponsiveContainer>
+            </div>
           </div>
         </>
       )}
@@ -289,13 +335,13 @@ const selectStyle: React.CSSProperties = {
   borderRadius: "8px",
 };
 
-const chartBoxStyle: React.CSSProperties = {
-  width: "100%",
-  height: "420px",
+const scrollWrapStyle: React.CSSProperties = {
+  overflowX: "auto",
   background: "#1f2937",
   border: "1px solid #374151",
   borderRadius: "12px",
   padding: "12px",
+  marginBottom: "16px",
 };
 
 function BottomNav() {
