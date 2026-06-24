@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
+import type { User } from "@supabase/supabase-js";
 import {
   Bar,
   BarChart,
@@ -43,16 +44,32 @@ const COLORS = [
 ];
 
 export default function GraphPage() {
+  const [user, setUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [rows, setRows] = useState<Row[]>([]);
   const [months, setMonths] = useState(12);
   const [selectedCategory, setSelectedCategory] = useState("");
   const [message, setMessage] = useState("");
 
   useEffect(() => {
-    void loadData();
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null);
+      setAuthLoading(false);
+    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, session) => {
+      setUser(session?.user ?? null);
+    });
+    return () => subscription.unsubscribe();
   }, []);
 
+  useEffect(() => {
+    if (user) void loadData();
+  }, [user]);
+
   const loadData = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return;
+
     setMessage("");
 
     const { data, error } = await supabase
@@ -66,6 +83,7 @@ export default function GraphPage() {
           minor_category
         )
       `)
+      .eq("user_id", session.user.id)
       .eq("direction", "expense")
       .order("txn_date", { ascending: true });
 
@@ -147,6 +165,14 @@ export default function GraphPage() {
   const selectedCategoryTotal = useMemo(() => {
     return selectedCategoryData.reduce((sum, row) => sum + row.amount, 0);
   }, [selectedCategoryData]);
+
+  if (authLoading) {
+    return <div style={{ minHeight: "100vh", background: "#111827", color: "#f9fafb", display: "flex", alignItems: "center", justifyContent: "center" }}>読込中...</div>;
+  }
+
+  if (!user) {
+    return <div style={{ minHeight: "100vh", background: "#111827", color: "#f9fafb", display: "flex", alignItems: "center", justifyContent: "center" }}>ログインしてください</div>;
+  }
 
   return (
     <div

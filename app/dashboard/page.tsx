@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import type { User } from "@supabase/supabase-js";
 
 type CostClass = "fixed" | "semi" | "variable" | "exclude";
 
@@ -171,7 +172,8 @@ function Card({
 }
 
 export default function DashboardPage() {
-
+  const [user, setUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
 
   const [month, setMonth] = useState(thisMonth());
   const [items, setItems] = useState<Txn[]>([]);
@@ -179,7 +181,21 @@ export default function DashboardPage() {
   const [message, setMessage] = useState("");
   const [virtualRent, setVirtualRent] = useState(120000);
 
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null);
+      setAuthLoading(false);
+    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, session) => {
+      setUser(session?.user ?? null);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
   async function load() {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return;
+
     setLoading(true);
     setMessage("");
 
@@ -201,6 +217,7 @@ export default function DashboardPage() {
       category_kind
     )
   `)
+      .eq("user_id", session.user.id)
       .gte("txn_date", from)
       .lt("txn_date", to)
       .order("txn_date", { ascending: false });
@@ -397,6 +414,14 @@ ${month}
       : summary.simulatedSavingRate >= 0
         ? "warn"
         : "bad";
+
+  if (authLoading) {
+    return <div style={{ minHeight: "100vh", background: "#111827", color: "#f9fafb", display: "flex", alignItems: "center", justifyContent: "center" }}>読込中...</div>;
+  }
+
+  if (!user) {
+    return <div style={{ minHeight: "100vh", background: "#111827", color: "#f9fafb", display: "flex", alignItems: "center", justifyContent: "center" }}>ログインしてください</div>;
+  }
 
   return (
     <main className="min-h-screen bg-gray-100 px-3 py-4 pb-24 text-gray-900">
