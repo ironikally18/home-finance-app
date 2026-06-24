@@ -21,8 +21,8 @@ type Row = {
   txn_date: string;
   amount: number;
   direction: Direction;
-  // ③ Supabase の型推論は join を配列で返すことがあるため両対応にする
-  categories: Category | Category[] | null;
+  // ③ Supabase join は常に単一オブジェクトまたは null（配列にはならない）
+  categories: Category | null;
 };
 
 // ④ 月の開始日・終了日を純粋関数で算出（loadData 内に埋め込まない）
@@ -139,10 +139,8 @@ export default function SummaryPage() {
       if (r.direction === "expense") {
         expense += amount;
 
-        // ⑩ categories が配列・単一どちらで返っても正しく取り出す
-        const cat = Array.isArray(r.categories)
-          ? r.categories[0] ?? null
-          : r.categories;
+        // ⑩ 配列チェックを削除（型定義を Category | null に修正済み）
+        const cat = r.categories;
         const name = cat
           ? `${cat.major_category} / ${cat.minor_category}`
           : "未分類";
