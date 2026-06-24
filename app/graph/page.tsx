@@ -230,15 +230,14 @@ export default function GraphPage() {
             <YAxis
               stroke="#f9fafb"
               tick={{ fontSize: 12 }}
-              tickFormatter={(v: number) =>
-                v >= 10000 ? `${(v / 10000).toFixed(0)}万` : String(v)
+              tickFormatter={(v) =>
+                Number(v) >= 10000 ? `${(Number(v) / 10000).toFixed(0)}万` : String(v)
               }
             />
             <Tooltip
               contentStyle={{ background: "#1f2937", border: "1px solid #374151", color: "#f9fafb" }}
-              formatter={(value: number, name: string) => [
+              formatter={(value) => [
                 `${Number(value).toLocaleString()}円`,
-                name,
               ]}
             />
             <Legend
@@ -296,7 +295,7 @@ export default function GraphPage() {
                 />
                 <Tooltip
                   contentStyle={{ background: "#1f2937", border: "1px solid #374151", color: "#f9fafb" }}
-                  formatter={(value: number) => [`${Number(value).toLocaleString()}円`, selectedCategory]}
+                  formatter={(value) => [`${Number(value).toLocaleString()}円`, selectedCategory]}
                 />
                 <Legend wrapperStyle={{ paddingTop: "8px", color: "#f9fafb", fontSize: "13px" }} />
                 <Line
