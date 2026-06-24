@@ -2,6 +2,22 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { createClient, User } from "@supabase/supabase-js";
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+  arrayMove,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
@@ -212,14 +228,11 @@ export default function Page() {
     const { data: a, error: aErr } = await supabase
       .from("accounts")
       .select("id, account_name, account_type, wallet_id, display_order")
-      .order("wallet_id", { ascending: true })
       .order("display_order", { ascending: true });
 
     const { data: c, error: cErr } = await supabase
       .from("categories")
       .select("id, wallet_type, major_category, minor_category, category_kind, display_order")
-      .order("wallet_type", { ascending: true })
-      .order("major_category", { ascending: true })
       .order("display_order", { ascending: true });
 
     const { data: mm, error: mmErr } = await supabase
@@ -351,30 +364,6 @@ export default function Page() {
     return wallets.find((w) => w.id === walletId) || null;
   }, [walletId, wallets]);
 
-  const accountGroupIndices = useMemo(() => {
-    const map = new Map<string, { idx: number; groupSize: number }>();
-    const groups = new Map<string | null, AccountRow[]>();
-    for (const a of accounts) {
-      if (!groups.has(a.wallet_id)) groups.set(a.wallet_id, []);
-      groups.get(a.wallet_id)!.push(a);
-    }
-    for (const group of groups.values()) {
-      group.forEach((a, i) => map.set(a.id, { idx: i, groupSize: group.length }));
-    }
-    return map;
-  }, [accounts]);
-
-  const categoryGroupIndices = useMemo(() => {
-    const map = new Map<string, { idx: number; groupSize: number }>();
-    categories.forEach((c, i) => map.set(c.id, { idx: i, groupSize: categories.length }));
-    return map;
-  }, [categories]);
-
-  const merchantGroupIndices = useMemo(() => {
-    const map = new Map<string, { idx: number; groupSize: number }>();
-    merchantMasters.forEach((m, i) => map.set(m.id, { idx: i, groupSize: merchantMasters.length }));
-    return map;
-  }, [merchantMasters]);
 
   const filteredAccounts = useMemo(() => {
     if (!walletId) return accounts;
@@ -749,59 +738,26 @@ export default function Page() {
     await loadTransactions();
   };
 
-  const moveAccount = async (id: string, direction: "up" | "down") => {
-    const current = accounts.find((x) => x.id === id);
-    if (!current) return;
-
-    const sameGroup = accounts.filter((x) => x.wallet_id === current.wallet_id);
-
-    const index = sameGroup.findIndex((x) => x.id === id);
-    const targetIndex = direction === "up" ? index - 1 : index + 1;
-
-    if (index < 0 || targetIndex < 0 || targetIndex >= sameGroup.length) return;
-
-    const reordered = [...sameGroup];
-    const [moved] = reordered.splice(index, 1);
-    reordered.splice(targetIndex, 0, moved);
-
+  const reorderAccounts = async (reordered: AccountRow[]) => {
     for (let i = 0; i < reordered.length; i++) {
       const { error } = await supabase
         .from("accounts")
         .update({ display_order: i + 1 })
         .eq("id", reordered[i].id);
-
-      if (error) {
-        setMasterMessage("支払元並び替えエラー: " + error.message);
-        return;
-      }
+      if (error) { setMasterMessage("支払元並び替えエラー: " + error.message); return; }
     }
-
     setMasterMessage("支払元の並び順を変更しました");
     await loadData();
   };
 
-  const moveCategory = async (id: string, direction: "up" | "down") => {
-    const index = categories.findIndex((x) => x.id === id);
-    const targetIndex = direction === "up" ? index - 1 : index + 1;
-
-    if (index < 0 || targetIndex < 0 || targetIndex >= categories.length) return;
-
-    const reordered = [...categories];
-    const [moved] = reordered.splice(index, 1);
-    reordered.splice(targetIndex, 0, moved);
-
+  const reorderCategories = async (reordered: CategoryRow[]) => {
     for (let i = 0; i < reordered.length; i++) {
       const { error } = await supabase
         .from("categories")
         .update({ display_order: i + 1 })
         .eq("id", reordered[i].id);
-
-      if (error) {
-        setMasterMessage("費目並び替えエラー: " + error.message);
-        return;
-      }
+      if (error) { setMasterMessage("費目並び替えエラー: " + error.message); return; }
     }
-
     setMasterMessage("費目の並び順を変更しました");
     await loadData();
   };
@@ -859,28 +815,14 @@ export default function Page() {
     await loadData();
   };
 
-  const moveMerchantMaster = async (id: string, direction: "up" | "down") => {
-    const index = merchantMasters.findIndex((x) => x.id === id);
-    const targetIndex = direction === "up" ? index - 1 : index + 1;
-
-    if (index < 0 || targetIndex < 0 || targetIndex >= merchantMasters.length) return;
-
-    const reordered = [...merchantMasters];
-    const [moved] = reordered.splice(index, 1);
-    reordered.splice(targetIndex, 0, moved);
-
+  const reorderMerchantMasters = async (reordered: MerchantMasterRow[]) => {
     for (let i = 0; i < reordered.length; i++) {
       const { error } = await supabase
         .from("merchant_masters")
         .update({ display_order: i + 1 })
         .eq("id", reordered[i].id);
-
-      if (error) {
-        setMasterMessage("支払先並び替えエラー: " + error.message);
-        return;
-      }
+      if (error) { setMasterMessage("支払先並び替えエラー: " + error.message); return; }
     }
-
     setMasterMessage("支払先候補の並び順を変更しました");
     await loadData();
   };
@@ -1063,21 +1005,6 @@ export default function Page() {
     borderBottom: "1px solid #374151",
   };
 
-  const moveButtonStyle: React.CSSProperties = {
-    padding: "8px 12px",
-    minWidth: "56px",
-    background: "#374151",
-    color: "#f9fafb",
-    border: "1px solid #6b7280",
-    borderRadius: "8px",
-    fontSize: "13px",
-    fontWeight: "bold",
-  };
-
-  const disabledMoveButtonStyle: React.CSSProperties = {
-    ...moveButtonStyle,
-    opacity: 0.35,
-  };
 
   return (
     <div style={{ maxWidth: "560px", margin: "0 auto", padding: "16px", paddingBottom: "88px" }}>
@@ -1882,223 +1809,37 @@ export default function Page() {
             </div>
           </div>
 
-          <div
-            style={{
-              border: "1px solid #ddd",
-              borderRadius: "8px",
-              padding: "12px",
-            }}
-          >
-            <h2 style={{ marginTop: 0, fontSize: "18px" }}>現在の支払元</h2>
+          <SortableAccountList
+            accounts={accounts}
+            editingAccountId={editingAccountId}
+            editAccountName={editAccountName}
+            editAccountType={editAccountType}
+            setEditAccountName={setEditAccountName}
+            setEditAccountType={setEditAccountType}
+            onSave={(id) => saveEditAccount(id)}
+            onCancel={() => setEditingAccountId(null)}
+            onEdit={startEditAccount}
+            onDelete={(id, name) => deleteAccount(id, name)}
+            onReorder={reorderAccounts}
+          />
 
-            <div style={{ display: "grid", gap: "8px" }}>
-              {accounts.map((a) => {
-                const isEditing = editingAccountId === a.id;
-                const gi = accountGroupIndices.get(a.id) ?? { idx: 0, groupSize: 1 };
-
-                return (
-                  <div
-                    key={a.id}
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      gap: "8px",
-                      borderBottom: "1px solid #eee",
-                      paddingBottom: "6px",
-                    }}
-                  >
-                    <div style={{ fontSize: "14px", flex: 1 }}>
-                      {isEditing ? (
-                        <div style={{ display: "grid", gap: "6px" }}>
-                          <input
-                            value={editAccountName}
-                            onChange={(e) => setEditAccountName(e.target.value)}
-                            style={{ width: "100%", padding: "6px" }}
-                          />
-                          <select
-                            value={editAccountType}
-                            onChange={(e) => setEditAccountType(e.target.value)}
-                            style={{ width: "100%", padding: "6px" }}
-                          >
-                            <option value="cash">cash</option>
-                            <option value="bank">bank</option>
-                            <option value="credit_card">credit_card</option>
-                            <option value="emoney">emoney</option>
-                            <option value="prepaid">prepaid</option>
-                          </select>
-                        </div>
-                      ) : (
-                        `${a.account_name} (${a.account_type})`
-                      )}
-                    </div>
-
-                    <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-                      {isEditing ? (
-                        <>
-                          <button onClick={async () => await saveEditAccount(a.id)}>保存</button>
-                          <button onClick={() => setEditingAccountId(null)}>戻す</button>
-                        </>
-                      ) : (
-                        <button onClick={() => startEditAccount(a)}>編集</button>
-                      )}
-
-                      <button
-                        type="button"
-                        onClick={async () => await moveAccount(a.id, "up")}
-                        disabled={gi.idx === 0}
-                        style={gi.idx === 0 ? disabledMoveButtonStyle : moveButtonStyle}
-                      >
-                        上へ
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={async () => await moveAccount(a.id, "down")}
-                        disabled={gi.idx === gi.groupSize - 1}
-                        style={gi.idx === gi.groupSize - 1 ? disabledMoveButtonStyle : moveButtonStyle}
-                      >
-                        下へ
-                      </button>
-
-                      <button
-                        onClick={async () => {
-                          await deleteAccount(a.id, a.account_name);
-                        }}
-                        style={{
-                          background: "#dc2626",
-                          color: "#fff",
-                          border: "none",
-                          borderRadius: "6px",
-                          padding: "6px 10px",
-                        }}
-                      >
-                        削除
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <div
-            style={{
-              border: "1px solid #ddd",
-              borderRadius: "8px",
-              padding: "12px",
-            }}
-          >
-            <h2 style={{ marginTop: 0, fontSize: "18px" }}>現在の費目</h2>
-
-            <div style={{ display: "grid", gap: "8px" }}>
-              {categories.map((c) => {
-                const isEditing = editingCategoryId === c.id;
-                const gi = categoryGroupIndices.get(c.id) ?? { idx: 0, groupSize: 1 };
-
-                return (
-                  <div
-                    key={c.id}
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      gap: "8px",
-                      borderBottom: "1px solid #eee",
-                      paddingBottom: "6px",
-                    }}
-                  >
-                    <div style={{ fontSize: "14px", flex: 1 }}>
-                      {isEditing ? (
-                        <div style={{ display: "grid", gap: "6px" }}>
-                          <select
-                            value={editCategoryWalletType}
-                            onChange={(e) => setEditCategoryWalletType(e.target.value)}
-                            style={{ width: "100%", padding: "6px" }}
-                          >
-                            <option value="household">household</option>
-                            <option value="allowance">allowance</option>
-                          </select>
-                          <input
-                            value={editCategoryMajor}
-                            onChange={(e) => setEditCategoryMajor(e.target.value)}
-                            style={{ width: "100%", padding: "6px" }}
-                          />
-                          <input
-                            value={editCategoryMinor}
-                            onChange={(e) => setEditCategoryMinor(e.target.value)}
-                            style={{ width: "100%", padding: "6px" }}
-                          />
-                          <select
-                            value={editCategoryKind}
-                            onChange={(e) => setEditCategoryKind(e.target.value)}
-                            style={{
-                              width: "100%",
-                              padding: "8px",
-                              borderRadius: "10px",
-                              border: "1px solid #d1d5db",
-                              background: "#fff",
-                            }}
-                          >
-                            <option value="fixed">固定費</option>
-                            <option value="semi">準固定費</option>
-                            <option value="variable">変動費</option>
-                            <option value="exclude">対象外</option>
-                          </select>
-                        </div>
-                      ) : (
-                        `[${c.wallet_type}] ${c.major_category} / ${c.minor_category}（${costKindLabel(c.category_kind)}）`
-                      )}
-                    </div>
-
-                    <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-                      {isEditing ? (
-                        <>
-                          <button onClick={async () => await saveEditCategory(c.id)}>保存</button>
-                          <button onClick={() => setEditingCategoryId(null)}>戻す</button>
-                        </>
-                      ) : (
-                        <button onClick={() => startEditCategory(c)}>編集</button>
-                      )}
-
-                      <button
-                        type="button"
-                        onClick={async () => await moveCategory(c.id, "up")}
-                        disabled={gi.idx === 0}
-                        style={gi.idx === 0 ? disabledMoveButtonStyle : moveButtonStyle}
-                      >
-                        上へ
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={async () => await moveCategory(c.id, "down")}
-                        disabled={gi.idx === gi.groupSize - 1}
-                        style={gi.idx === gi.groupSize - 1 ? disabledMoveButtonStyle : moveButtonStyle}
-                      >
-                        下へ
-                      </button>
-
-                      <button
-                        onClick={async () => {
-                          await deleteCategory(c.id, c.major_category, c.minor_category);
-                        }}
-                        style={{
-                          background: "#dc2626",
-                          color: "#fff",
-                          border: "none",
-                          borderRadius: "6px",
-                          padding: "6px 10px",
-                        }}
-                      >
-                        削除
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+          <SortableCategoryList
+            categories={categories}
+            editingCategoryId={editingCategoryId}
+            editCategoryWalletType={editCategoryWalletType}
+            editCategoryMajor={editCategoryMajor}
+            editCategoryMinor={editCategoryMinor}
+            editCategoryKind={editCategoryKind}
+            setEditCategoryWalletType={setEditCategoryWalletType}
+            setEditCategoryMajor={setEditCategoryMajor}
+            setEditCategoryMinor={setEditCategoryMinor}
+            setEditCategoryKind={setEditCategoryKind}
+            onSave={(id) => saveEditCategory(id)}
+            onCancel={() => setEditingCategoryId(null)}
+            onEdit={startEditCategory}
+            onDelete={(id, major, minor) => deleteCategory(id, major, minor)}
+            onReorder={reorderCategories}
+          />
 
           <div
             style={{
@@ -2134,98 +1875,280 @@ export default function Page() {
             </div>
           </div>
 
-          <div
-            style={{
-              border: "1px solid #ddd",
-              borderRadius: "8px",
-              padding: "12px",
-            }}
-          >
-            <h2 style={{ marginTop: 0, fontSize: "18px" }}>現在の支払先候補</h2>
-
-            <div style={{ display: "grid", gap: "8px" }}>
-              {merchantMasters.map((m) => {
-                const isEditing = editingMerchantMasterId === m.id;
-                const gi = merchantGroupIndices.get(m.id) ?? { idx: 0, groupSize: 1 };
-
-                return (
-                  <div
-                    key={m.id}
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      gap: "8px",
-                      borderBottom: "1px solid #eee",
-                      paddingBottom: "6px",
-                    }}
-                  >
-                    <div style={{ fontSize: "14px", flex: 1 }}>
-                      {isEditing ? (
-                        <input
-                          value={editMerchantMasterName}
-                          onChange={(e) => setEditMerchantMasterName(e.target.value)}
-                          style={{ width: "100%", padding: "6px" }}
-                        />
-                      ) : (
-                        m.merchant_name
-                      )}
-                    </div>
-
-                    <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-                      {isEditing ? (
-                        <>
-                          <button onClick={async () => await saveEditMerchantMaster(m.id)}>保存</button>
-                          <button onClick={() => setEditingMerchantMasterId(null)}>戻す</button>
-                        </>
-                      ) : (
-                        <button onClick={() => startEditMerchantMaster(m)}>編集</button>
-                      )}
-
-                      <button
-                        type="button"
-                        onClick={async () => await moveMerchantMaster(m.id, "up")}
-                        disabled={gi.idx === 0}
-                        style={gi.idx === 0 ? disabledMoveButtonStyle : moveButtonStyle}
-                      >
-                        上へ
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={async () => await moveMerchantMaster(m.id, "down")}
-                        disabled={gi.idx === gi.groupSize - 1}
-                        style={gi.idx === gi.groupSize - 1 ? disabledMoveButtonStyle : moveButtonStyle}
-                      >
-                        下へ
-                      </button>
-
-                      <button
-                        onClick={async () => {
-                          await deleteMerchantMaster(m.id, m.merchant_name);
-                        }}
-                        style={{
-                          background: "#dc2626",
-                          color: "#fff",
-                          border: "none",
-                          borderRadius: "6px",
-                          padding: "6px 10px",
-                        }}
-                      >
-                        削除
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+          <SortableMerchantList
+            merchantMasters={merchantMasters}
+            editingMerchantMasterId={editingMerchantMasterId}
+            editMerchantMasterName={editMerchantMasterName}
+            setEditMerchantMasterName={setEditMerchantMasterName}
+            onSave={(id) => saveEditMerchantMaster(id)}
+            onCancel={() => setEditingMerchantMasterId(null)}
+            onEdit={startEditMerchantMaster}
+            onDelete={(id, name) => deleteMerchantMaster(id, name)}
+            onReorder={reorderMerchantMasters}
+          />
 
           <div>{masterMessage}</div>
         </div>
       )}
 
       <BottomNav />
+    </div>
+  );
+}
+
+const dragHandleStyle: React.CSSProperties = {
+  cursor: "grab",
+  padding: "4px 8px",
+  color: "#9ca3af",
+  fontSize: "18px",
+  touchAction: "none",
+  userSelect: "none",
+};
+
+function SortableItem({ id, children }: { id: string; children: React.ReactNode }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.5 : 1,
+        display: "flex",
+        alignItems: "center",
+        gap: "8px",
+        borderBottom: "1px solid #eee",
+        paddingBottom: "6px",
+      }}
+    >
+      <span {...attributes} {...listeners} style={dragHandleStyle}>⠿</span>
+      <div style={{ flex: 1 }}>{children}</div>
+    </div>
+  );
+}
+
+function SortableAccountList({
+  accounts, editingAccountId, editAccountName, editAccountType,
+  setEditAccountName, setEditAccountType,
+  onSave, onCancel, onEdit, onDelete, onReorder,
+}: {
+  accounts: AccountRow[];
+  editingAccountId: string | null;
+  editAccountName: string;
+  editAccountType: string;
+  setEditAccountName: (v: string) => void;
+  setEditAccountType: (v: string) => void;
+  onSave: (id: string) => void;
+  onCancel: () => void;
+  onEdit: (a: AccountRow) => void;
+  onDelete: (id: string, name: string) => void;
+  onReorder: (reordered: AccountRow[]) => void;
+}) {
+  const [local, setLocal] = useState(accounts);
+  useEffect(() => { setLocal(accounts); }, [accounts]);
+  const sensors = useSensors(useSensor(PointerSensor), useSensor(TouchSensor));
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = local.findIndex((a) => a.id === active.id);
+    const newIndex = local.findIndex((a) => a.id === over.id);
+    const reordered = arrayMove(local, oldIndex, newIndex);
+    setLocal(reordered);
+    onReorder(reordered);
+  };
+
+  return (
+    <div style={{ border: "1px solid #ddd", borderRadius: "8px", padding: "12px" }}>
+      <h2 style={{ marginTop: 0, fontSize: "18px" }}>現在の支払元</h2>
+      <div style={{ fontSize: "12px", color: "#888", marginBottom: "8px" }}>⠿ をドラッグして並び替え</div>
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+        <SortableContext items={local.map((a) => a.id)} strategy={verticalListSortingStrategy}>
+          <div style={{ display: "grid", gap: "4px" }}>
+            {local.map((a) => {
+              const isEditing = editingAccountId === a.id;
+              return (
+                <SortableItem key={a.id} id={a.id}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                    <div style={{ fontSize: "14px", flex: 1 }}>
+                      {isEditing ? (
+                        <div style={{ display: "grid", gap: "6px" }}>
+                          <input value={editAccountName} onChange={(e) => setEditAccountName(e.target.value)} style={{ width: "100%", padding: "6px" }} />
+                          <select value={editAccountType} onChange={(e) => setEditAccountType(e.target.value)} style={{ width: "100%", padding: "6px" }}>
+                            <option value="cash">cash</option>
+                            <option value="bank">bank</option>
+                            <option value="credit_card">credit_card</option>
+                            <option value="emoney">emoney</option>
+                            <option value="prepaid">prepaid</option>
+                          </select>
+                        </div>
+                      ) : `${a.account_name} (${a.account_type})`}
+                    </div>
+                    <div style={{ display: "flex", gap: "6px" }}>
+                      {isEditing ? (
+                        <><button onClick={() => onSave(a.id)}>保存</button><button onClick={onCancel}>戻す</button></>
+                      ) : (
+                        <button onClick={() => onEdit(a)}>編集</button>
+                      )}
+                      <button onClick={() => onDelete(a.id, a.account_name)} style={{ background: "#dc2626", color: "#fff", border: "none", borderRadius: "6px", padding: "6px 10px" }}>削除</button>
+                    </div>
+                  </div>
+                </SortableItem>
+              );
+            })}
+          </div>
+        </SortableContext>
+      </DndContext>
+    </div>
+  );
+}
+
+function SortableCategoryList({
+  categories, editingCategoryId,
+  editCategoryWalletType, editCategoryMajor, editCategoryMinor, editCategoryKind,
+  setEditCategoryWalletType, setEditCategoryMajor, setEditCategoryMinor, setEditCategoryKind,
+  onSave, onCancel, onEdit, onDelete, onReorder,
+}: {
+  categories: CategoryRow[];
+  editingCategoryId: string | null;
+  editCategoryWalletType: string;
+  editCategoryMajor: string;
+  editCategoryMinor: string;
+  editCategoryKind: string;
+  setEditCategoryWalletType: (v: string) => void;
+  setEditCategoryMajor: (v: string) => void;
+  setEditCategoryMinor: (v: string) => void;
+  setEditCategoryKind: (v: string) => void;
+  onSave: (id: string) => void;
+  onCancel: () => void;
+  onEdit: (c: CategoryRow) => void;
+  onDelete: (id: string, major: string, minor: string) => void;
+  onReorder: (reordered: CategoryRow[]) => void;
+}) {
+  const [local, setLocal] = useState(categories);
+  useEffect(() => { setLocal(categories); }, [categories]);
+  const sensors = useSensors(useSensor(PointerSensor), useSensor(TouchSensor));
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = local.findIndex((c) => c.id === active.id);
+    const newIndex = local.findIndex((c) => c.id === over.id);
+    const reordered = arrayMove(local, oldIndex, newIndex);
+    setLocal(reordered);
+    onReorder(reordered);
+  };
+
+  return (
+    <div style={{ border: "1px solid #ddd", borderRadius: "8px", padding: "12px" }}>
+      <h2 style={{ marginTop: 0, fontSize: "18px" }}>現在の費目</h2>
+      <div style={{ fontSize: "12px", color: "#888", marginBottom: "8px" }}>⠿ をドラッグして並び替え</div>
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+        <SortableContext items={local.map((c) => c.id)} strategy={verticalListSortingStrategy}>
+          <div style={{ display: "grid", gap: "4px" }}>
+            {local.map((c) => {
+              const isEditing = editingCategoryId === c.id;
+              return (
+                <SortableItem key={c.id} id={c.id}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                    <div style={{ fontSize: "14px", flex: 1 }}>
+                      {isEditing ? (
+                        <div style={{ display: "grid", gap: "6px" }}>
+                          <select value={editCategoryWalletType} onChange={(e) => setEditCategoryWalletType(e.target.value)} style={{ width: "100%", padding: "6px" }}>
+                            <option value="household">household</option>
+                            <option value="allowance">allowance</option>
+                          </select>
+                          <input value={editCategoryMajor} onChange={(e) => setEditCategoryMajor(e.target.value)} style={{ width: "100%", padding: "6px" }} />
+                          <input value={editCategoryMinor} onChange={(e) => setEditCategoryMinor(e.target.value)} style={{ width: "100%", padding: "6px" }} />
+                          <select value={editCategoryKind} onChange={(e) => setEditCategoryKind(e.target.value)} style={{ width: "100%", padding: "8px", borderRadius: "10px", border: "1px solid #d1d5db", background: "#fff" }}>
+                            <option value="fixed">固定費</option>
+                            <option value="semi">準固定費</option>
+                            <option value="variable">変動費</option>
+                            <option value="exclude">対象外</option>
+                          </select>
+                        </div>
+                      ) : `[${c.wallet_type}] ${c.major_category} / ${c.minor_category}（${costKindLabel(c.category_kind)}）`}
+                    </div>
+                    <div style={{ display: "flex", gap: "6px" }}>
+                      {isEditing ? (
+                        <><button onClick={() => onSave(c.id)}>保存</button><button onClick={onCancel}>戻す</button></>
+                      ) : (
+                        <button onClick={() => onEdit(c)}>編集</button>
+                      )}
+                      <button onClick={() => onDelete(c.id, c.major_category, c.minor_category)} style={{ background: "#dc2626", color: "#fff", border: "none", borderRadius: "6px", padding: "6px 10px" }}>削除</button>
+                    </div>
+                  </div>
+                </SortableItem>
+              );
+            })}
+          </div>
+        </SortableContext>
+      </DndContext>
+    </div>
+  );
+}
+
+function SortableMerchantList({
+  merchantMasters, editingMerchantMasterId, editMerchantMasterName,
+  setEditMerchantMasterName, onSave, onCancel, onEdit, onDelete, onReorder,
+}: {
+  merchantMasters: MerchantMasterRow[];
+  editingMerchantMasterId: string | null;
+  editMerchantMasterName: string;
+  setEditMerchantMasterName: (v: string) => void;
+  onSave: (id: string) => void;
+  onCancel: () => void;
+  onEdit: (m: MerchantMasterRow) => void;
+  onDelete: (id: string, name: string) => void;
+  onReorder: (reordered: MerchantMasterRow[]) => void;
+}) {
+  const [local, setLocal] = useState(merchantMasters);
+  useEffect(() => { setLocal(merchantMasters); }, [merchantMasters]);
+  const sensors = useSensors(useSensor(PointerSensor), useSensor(TouchSensor));
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = local.findIndex((m) => m.id === active.id);
+    const newIndex = local.findIndex((m) => m.id === over.id);
+    const reordered = arrayMove(local, oldIndex, newIndex);
+    setLocal(reordered);
+    onReorder(reordered);
+  };
+
+  return (
+    <div style={{ border: "1px solid #ddd", borderRadius: "8px", padding: "12px" }}>
+      <h2 style={{ marginTop: 0, fontSize: "18px" }}>現在の支払先候補</h2>
+      <div style={{ fontSize: "12px", color: "#888", marginBottom: "8px" }}>⠿ をドラッグして並び替え</div>
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+        <SortableContext items={local.map((m) => m.id)} strategy={verticalListSortingStrategy}>
+          <div style={{ display: "grid", gap: "4px" }}>
+            {local.map((m) => {
+              const isEditing = editingMerchantMasterId === m.id;
+              return (
+                <SortableItem key={m.id} id={m.id}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                    <div style={{ fontSize: "14px", flex: 1 }}>
+                      {isEditing ? (
+                        <input value={editMerchantMasterName} onChange={(e) => setEditMerchantMasterName(e.target.value)} style={{ width: "100%", padding: "6px" }} />
+                      ) : m.merchant_name}
+                    </div>
+                    <div style={{ display: "flex", gap: "6px" }}>
+                      {isEditing ? (
+                        <><button onClick={() => onSave(m.id)}>保存</button><button onClick={onCancel}>戻す</button></>
+                      ) : (
+                        <button onClick={() => onEdit(m)}>編集</button>
+                      )}
+                      <button onClick={() => onDelete(m.id, m.merchant_name)} style={{ background: "#dc2626", color: "#fff", border: "none", borderRadius: "6px", padding: "6px 10px" }}>削除</button>
+                    </div>
+                  </div>
+                </SortableItem>
+              );
+            })}
+          </div>
+        </SortableContext>
+      </DndContext>
     </div>
   );
 }
