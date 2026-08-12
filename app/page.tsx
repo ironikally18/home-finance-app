@@ -2170,6 +2170,7 @@ function BottomNav() {
       }}
     >
       <Nav href="/" label="🏠" />
+      <Nav href="/fixed-costs" label="固定費" />
       <Nav href="/summary" label="📊" />
       <Nav href="/graph" label="📈" />
       <Nav href="/calendar" label="📅" />
