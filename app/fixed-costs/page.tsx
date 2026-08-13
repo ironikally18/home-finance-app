@@ -48,6 +48,7 @@ type FixedCostEntry = {
   fixed_cost_item_id: string;
   target_month: string;
   amount: number;
+  payment_date: string | null;
   transaction_id: string | null;
 };
 
@@ -65,22 +66,12 @@ function formatYen(value: number) {
   return new Intl.NumberFormat("ja-JP").format(value) + "円";
 }
 
-function getDaysInMonth(month: string) {
-  const [year, monthNumber] = month
-    .split("-")
-    .map(Number);
-
-  return new Date(
-    year,
-    monthNumber,
-    0
-  ).getDate();
-}
-
-function makeTransactionDate(
+function getDefaultPaymentDate(
   month: string,
   paymentDay: number | null
 ) {
+  if (!paymentDay) return "";
+
   const [year, monthNumber] = month
     .split("-")
     .map(Number);
@@ -92,7 +83,7 @@ function makeTransactionDate(
   ).getDate();
 
   const day = Math.min(
-    paymentDay || 1,
+    paymentDay,
     lastDay
   );
 
@@ -100,6 +91,25 @@ function makeTransactionDate(
     month +
     "-" +
     String(day).padStart(2, "0")
+  );
+}
+
+function getCategoryLabel(
+  categories: CategoryRow[],
+  id: string | null
+) {
+  if (!id) return "未設定";
+
+  const category = categories.find(
+    (c) => c.id === id
+  );
+
+  if (!category) return "未設定";
+
+  return (
+    category.major_category +
+    " / " +
+    category.minor_category
   );
 }
 
@@ -157,6 +167,15 @@ export default function FixedCostsPage() {
 
   const [newItemName, setNewItemName] =
     useState("");
+
+  /*
+   * 月ごとの入力値
+   */
+  const [amountValues, setAmountValues] =
+    useState<Record<string, string>>({});
+
+  const [dateValues, setDateValues] =
+    useState<Record<string, string>>({});
 
   useEffect(() => {
     const init = async () => {
@@ -216,7 +235,7 @@ export default function FixedCostsPage() {
       supabase
         .from("fixed_cost_entries")
         .select(
-          "id,fixed_cost_item_id,target_month,amount,transaction_id"
+          "id,fixed_cost_item_id,target_month,amount,payment_date,transaction_id"
         )
         .eq("user_id", user.id)
         .eq(
@@ -270,15 +289,16 @@ export default function FixedCostsPage() {
       return;
     }
 
-    setItems(
+    const loadedItems =
       (itemsResult.data as FixedCostItem[]) ||
-        []
-    );
+      [];
 
-    setEntries(
+    const loadedEntries =
       (entriesResult.data as FixedCostEntry[]) ||
-        []
-    );
+      [];
+
+    setItems(loadedItems);
+    setEntries(loadedEntries);
 
     setWallets(
       (walletsResult.data as WalletRow[]) ||
@@ -294,6 +314,52 @@ export default function FixedCostsPage() {
       (categoriesResult.data as CategoryRow[]) ||
         []
     );
+
+    /*
+     * DBから読み込んだ値を画面にセット
+     *
+     * 金額：
+     * その月の登録値
+     *
+     * 日付：
+     * 登録済みの日付
+     *
+     * 未登録なら固定費マスターの
+     * payment_dayを初期値として使用
+     */
+    const newAmounts: Record<
+      string,
+      string
+    > = {};
+
+    const newDates: Record<
+      string,
+      string
+    > = {};
+
+    loadedItems.forEach((item) => {
+      const entry =
+        loadedEntries.find(
+          (e) =>
+            e.fixed_cost_item_id ===
+            item.id
+        );
+
+      newAmounts[item.id] =
+        entry?.amount != null
+          ? String(entry.amount)
+          : "";
+
+      newDates[item.id] =
+        entry?.payment_date ||
+        getDefaultPaymentDate(
+          month,
+          item.payment_day
+        );
+    });
+
+    setAmountValues(newAmounts);
+    setDateValues(newDates);
 
     setLoading(false);
   };
@@ -316,102 +382,190 @@ export default function FixedCostsPage() {
 
   const totalAmount = useMemo(() => {
     return items.reduce((sum, item) => {
-      const entry = entryMap.get(item.id);
-
       return (
         sum +
-        Number(entry?.amount || 0)
+        Number(
+          amountValues[item.id] || 0
+        )
       );
     }, 0);
-  }, [items, entryMap]);
+  }, [items, amountValues]);
 
   const enteredCount = useMemo(() => {
     return items.filter((item) => {
-      const entry = entryMap.get(item.id);
-
       return (
-        entry &&
-        Number(entry.amount) > 0
+        amountValues[item.id] !== "" &&
+        amountValues[item.id] !== undefined
       );
     }).length;
-  }, [items, entryMap]);
+  }, [items, amountValues]);
 
   const unenteredCount =
     items.length - enteredCount;
 
-  const getCategoryLabel = (
-    id: string | null
-  ) => {
-    if (!id) return "未設定";
-
-    const category =
-      categories.find(
-        (c) => c.id === id
-      );
-
-    if (!category) return "未設定";
-
-    return (
-      category.major_category +
-      " / " +
-      category.minor_category
-    );
-  };
-
-  const saveAmount = async (
-    item: FixedCostItem,
-    value: string
+  /*
+   * 金額と日付をまとめて保存
+   */
+  const saveAmountAndDate = async (
+    item: FixedCostItem
   ) => {
     if (!user) return;
 
-    const amount = Number(
-      value.replace(/,/g, "")
-    );
+    const rawAmount =
+      amountValues[item.id] ?? "";
 
-    if (
-      value !== "" &&
-      (!Number.isFinite(amount) ||
-        amount < 0)
-    ) {
-      setMessage(
-        "金額を正しく入力してください"
-      );
-      return;
-    }
-
-    const existing =
-      entryMap.get(item.id);
+    const paymentDate =
+      dateValues[item.id] ?? "";
 
     /*
-     * 空欄なら、その月の固定費登録を削除
+     * 金額チェック
      */
-    if (value === "") {
+    if (rawAmount !== "") {
+      const amount = Number(
+        rawAmount.replace(/,/g, "")
+      );
+
+      if (
+        !Number.isFinite(amount) ||
+        amount < 0
+      ) {
+        setMessage(
+          `「${item.item_name}」の金額を正しく入力してください。`
+        );
+        return;
+      }
+    }
+
+    /*
+     * 日付チェック
+     */
+    if (paymentDate !== "") {
+      if (
+        !paymentDate.startsWith(
+          `${month}-`
+        )
+      ) {
+        setMessage(
+          `「${item.item_name}」の支払日は${month}の日付を指定してください。`
+        );
+        return;
+      }
+    }
+
+    /*
+     * 金額も日付も空欄
+     * → その月の登録を削除
+     */
+    if (
+      rawAmount === "" &&
+      paymentDate === ""
+    ) {
+      const existing =
+        entryMap.get(item.id);
+
       if (existing) {
-        const { error } =
-          await supabase
-            .from("fixed_cost_entries")
+        /*
+         * 既存の通常家計簿データも削除
+         */
+        if (
+          existing.transaction_id
+        ) {
+          const {
+            error:
+              transactionDeleteError,
+          } = await supabase
+            .from(
+              "transaction_records"
+            )
             .delete()
-            .eq("id", existing.id)
+            .eq(
+              "id",
+              existing.transaction_id
+            )
             .eq(
               "user_id",
               user.id
             );
 
+          if (
+            transactionDeleteError
+          ) {
+            setMessage(
+              "家計簿データ削除エラー: " +
+                transactionDeleteError.message
+            );
+            return;
+          }
+        }
+
+        const {
+          error,
+        } = await supabase
+          .from(
+            "fixed_cost_entries"
+          )
+          .delete()
+          .eq(
+            "id",
+            existing.id
+          )
+          .eq(
+            "user_id",
+            user.id
+          );
+
         if (error) {
           setMessage(
-            "金額削除エラー: " +
+            "固定費削除エラー: " +
               error.message
           );
           return;
         }
       }
 
+      setMessage(
+        `${item.item_name}の${month}分を削除しました。`
+      );
+
       await loadAll();
       return;
     }
 
     /*
-     * 財布・支払元・費目が必要
+     * 金額だけ入力されて日付が空欄の場合
+     *
+     * 固定費マスターの日を使う
+     */
+    const finalPaymentDate =
+      paymentDate ||
+      getDefaultPaymentDate(
+        month,
+        item.payment_day
+      );
+
+    if (!finalPaymentDate) {
+      setMessage(
+        `「${item.item_name}」の支払日を入力してください。`
+      );
+      return;
+    }
+
+    const amount = Number(
+      rawAmount.replace(/,/g, "")
+    );
+
+    if (
+      !Number.isFinite(amount) ||
+      amount <= 0
+    ) {
+      setMessage(
+        `「${item.item_name}」の金額を入力してください。`
+      );
+      return;
+    }
+
+    /*
+     * 財布・支払元・費目チェック
      */
     if (
       !item.wallet_id ||
@@ -424,51 +578,59 @@ export default function FixedCostsPage() {
       return;
     }
 
-    /*
-     * 支払日から実際の日付を作成
-     *
-     * 例：
-     * 2026-08 + 25日
-     * → 2026-08-25
-     *
-     * 31日がない月は月末日に調整
-     */
-    const transactionDate =
-      makeTransactionDate(
-        month,
-        item.payment_day
-      );
+    const existing =
+      entryMap.get(item.id);
 
     /*
-     * 既存の家計簿データがあれば更新
+     * 既存の家計簿データを更新
      */
     if (existing?.transaction_id) {
       const {
-        error: transactionError,
+        error:
+          transactionError,
       } = await supabase
-        .from("transaction_records")
+        .from(
+          "transaction_records"
+        )
         .update({
-          txn_date: transactionDate,
+          txn_date:
+            finalPaymentDate,
+
           posting_date:
-            transactionDate,
+            finalPaymentDate,
+
           amount,
+
           wallet_id:
             item.wallet_id,
+
           category_id:
             item.category_id,
+
           payment_account_id:
             item.account_id,
+
           merchant_name:
             item.merchant_name ||
             null,
+
           description:
             `固定費: ${item.item_name}`,
-          direction: "expense",
+
+          direction:
+            "expense",
+
           transaction_type:
             "fixed_cost",
-          statement_month: month,
-          is_confirmed: true,
-          is_manual: true,
+
+          statement_month:
+            month,
+
+          is_confirmed:
+            true,
+
+          is_manual:
+            true,
         })
         .eq(
           "id",
@@ -490,9 +652,15 @@ export default function FixedCostsPage() {
       const {
         error: entryError,
       } = await supabase
-        .from("fixed_cost_entries")
+        .from(
+          "fixed_cost_entries"
+        )
         .update({
           amount,
+
+          payment_date:
+            finalPaymentDate,
+
           updated_at:
             new Date().toISOString(),
         })
@@ -514,7 +682,7 @@ export default function FixedCostsPage() {
       }
 
       setMessage(
-        `${item.item_name}を更新しました`
+        `${item.item_name}を更新しました。`
       );
 
       await loadAll();
@@ -522,24 +690,28 @@ export default function FixedCostsPage() {
     }
 
     /*
-     * 新規に通常家計簿へ登録
+     * 新規家計簿登録
      */
     const {
       data: transactionData,
-      error: transactionError,
+      error:
+        transactionError,
     } = await supabase
-      .from("transaction_records")
+      .from(
+        "transaction_records"
+      )
       .insert({
-        user_id: user.id,
+        user_id:
+          user.id,
 
         wallet_id:
           item.wallet_id,
 
         txn_date:
-          transactionDate,
+          finalPaymentDate,
 
         posting_date:
-          transactionDate,
+          finalPaymentDate,
 
         amount,
 
@@ -564,12 +736,6 @@ export default function FixedCostsPage() {
 
         transaction_type:
           "fixed_cost",
-
-        import_source_id:
-          null,
-
-        external_row_key:
-          null,
 
         statement_month:
           month,
@@ -607,15 +773,18 @@ export default function FixedCostsPage() {
     }
 
     /*
-     * 固定費月別データを保存
+     * 固定費の月別データを保存
      */
     const {
       error: entryError,
     } = await supabase
-      .from("fixed_cost_entries")
+      .from(
+        "fixed_cost_entries"
+      )
       .upsert(
         {
-          user_id: user.id,
+          user_id:
+            user.id,
 
           fixed_cost_item_id:
             item.id,
@@ -624,6 +793,9 @@ export default function FixedCostsPage() {
             `${month}-01`,
 
           amount,
+
+          payment_date:
+            finalPaymentDate,
 
           transaction_id:
             transactionData?.id ||
@@ -644,12 +816,15 @@ export default function FixedCostsPage() {
     }
 
     setMessage(
-      `${item.item_name}を登録しました`
+      `${item.item_name}を登録しました。`
     );
 
     await loadAll();
   };
 
+  /*
+   * 固定費項目追加
+   */
   const addItem = async () => {
     if (!user) return;
 
@@ -658,7 +833,7 @@ export default function FixedCostsPage() {
 
     if (!name) {
       setMessage(
-        "固定費項目名を入力してください"
+        "固定費項目名を入力してください。"
       );
       return;
     }
@@ -676,14 +851,24 @@ export default function FixedCostsPage() {
     const {
       error,
     } = await supabase
-      .from("fixed_cost_items")
+      .from(
+        "fixed_cost_items"
+      )
       .insert({
-        user_id: user.id,
-        item_name: name,
-        payment_day: null,
+        user_id:
+          user.id,
+
+        item_name:
+          name,
+
+        payment_day:
+          null,
+
         display_order:
           maxOrder + 1,
-        is_active: true,
+
+        is_active:
+          true,
       });
 
     if (error) {
@@ -697,12 +882,15 @@ export default function FixedCostsPage() {
     setNewItemName("");
 
     setMessage(
-      `${name}を追加しました`
+      `${name}を追加しました。`
     );
 
     await loadAll();
   };
 
+  /*
+   * 固定費設定編集開始
+   */
   const startEditItem = (
     item: FixedCostItem
   ) => {
@@ -739,6 +927,16 @@ export default function FixedCostsPage() {
     );
   };
 
+  /*
+   * 固定費マスター保存
+   *
+   * payment_dayは
+   * 「毎月の初期値」
+   *
+   * 実際の各月の日付は
+   * fixed_cost_entries.payment_date
+   * に保存される
+   */
   const saveEditItem =
     async () => {
       if (
@@ -753,7 +951,7 @@ export default function FixedCostsPage() {
 
       if (!name) {
         setMessage(
-          "固定費項目名を入力してください"
+          "固定費項目名を入力してください。"
         );
         return;
       }
@@ -766,9 +964,10 @@ export default function FixedCostsPage() {
         editPaymentDay.trim() !==
         ""
       ) {
-        const n = Number(
-          editPaymentDay
-        );
+        const n =
+          Number(
+            editPaymentDay
+          );
 
         if (
           !Number.isInteger(n) ||
@@ -776,7 +975,7 @@ export default function FixedCostsPage() {
           n > 31
         ) {
           setMessage(
-            "支払日は1～31の範囲で入力してください"
+            "初期支払日は1～31の範囲で入力してください。"
           );
           return;
         }
@@ -787,9 +986,12 @@ export default function FixedCostsPage() {
       const {
         error,
       } = await supabase
-        .from("fixed_cost_items")
+        .from(
+          "fixed_cost_items"
+        )
         .update({
-          item_name: name,
+          item_name:
+            name,
 
           wallet_id:
             editWalletId ||
@@ -831,12 +1033,10 @@ export default function FixedCostsPage() {
       }
 
       setMessage(
-        `${name}の設定を保存しました`
+        `${name}の設定を保存しました。`
       );
 
-      setEditingItemId(
-        null
-      );
+      setEditingItemId(null);
 
       setEditItemName("");
       setEditWalletId("");
@@ -848,6 +1048,12 @@ export default function FixedCostsPage() {
       await loadAll();
     };
 
+  /*
+   * 固定費削除
+   *
+   * is_active=falseなので
+   * 過去データは残る
+   */
   const deleteItem =
     async (
       item: FixedCostItem
@@ -864,9 +1070,13 @@ export default function FixedCostsPage() {
       const {
         error,
       } = await supabase
-        .from("fixed_cost_items")
+        .from(
+          "fixed_cost_items"
+        )
         .update({
-          is_active: false,
+          is_active:
+            false,
+
           updated_at:
             new Date().toISOString(),
         })
@@ -888,12 +1098,15 @@ export default function FixedCostsPage() {
       }
 
       setMessage(
-        `${item.item_name}を固定費一覧から削除しました`
+        `${item.item_name}を固定費一覧から削除しました。`
       );
 
       await loadAll();
     };
 
+  /*
+   * 並び替え
+   */
   const moveItem =
     async (
       itemId: string,
@@ -901,6 +1114,8 @@ export default function FixedCostsPage() {
         | "up"
         | "down"
     ) => {
+      if (!user) return;
+
       const index =
         items.findIndex(
           (x) =>
@@ -946,23 +1161,22 @@ export default function FixedCostsPage() {
       ) {
         const {
           error,
-        } =
-          await supabase
-            .from(
-              "fixed_cost_items"
-            )
-            .update({
-              display_order:
-                i + 1,
-            })
-            .eq(
-              "id",
-              reordered[i].id
-            )
-            .eq(
-              "user_id",
-              user?.id
-            );
+        } = await supabase
+          .from(
+            "fixed_cost_items"
+          )
+          .update({
+            display_order:
+              i + 1,
+          })
+          .eq(
+            "id",
+            reordered[i].id
+          )
+          .eq(
+            "user_id",
+            user.id
+          );
 
         if (error) {
           setMessage(
@@ -976,10 +1190,41 @@ export default function FixedCostsPage() {
       await loadAll();
     };
 
+  /*
+   * 月変更
+   */
+  const changeMonth = (
+    offset: number
+  ) => {
+    const [
+      year,
+      monthNumber,
+    ] = month
+      .split("-")
+      .map(Number);
+
+    const d =
+      new Date(
+        year,
+        monthNumber - 1 + offset,
+        1
+      );
+
+    setMonth(
+      `${d.getFullYear()}-${String(
+        d.getMonth() + 1
+      ).padStart(2, "0")}`
+    );
+  };
+
   if (authLoading) {
     return (
       <main style={pageStyle}>
-        読み込み中...
+        <div
+          style={contentStyle}
+        >
+          読み込み中...
+        </div>
       </main>
     );
   }
@@ -990,15 +1235,11 @@ export default function FixedCostsPage() {
         <div
           style={contentStyle}
         >
-          <h1
-            style={titleStyle}
-          >
+          <h1 style={titleStyle}>
             固定費チェック
           </h1>
 
-          <div
-            style={cardStyle}
-          >
+          <div style={cardStyle}>
             ログインしてください。
           </div>
         </div>
@@ -1011,9 +1252,7 @@ export default function FixedCostsPage() {
       <div
         style={contentStyle}
       >
-        <h1
-          style={titleStyle}
-        >
+        <h1 style={titleStyle}>
           固定費チェック
         </h1>
 
@@ -1022,30 +1261,10 @@ export default function FixedCostsPage() {
         >
           <button
             type="button"
-            onClick={() => {
-              const [
-                y,
-                m,
-              ] = month
-                .split("-")
-                .map(Number);
-
-              const d =
-                new Date(
-                  y,
-                  m - 2,
-                  1
-                );
-
-              setMonth(
-                `${d.getFullYear()}-${String(
-                  d.getMonth() + 1
-                ).padStart(2, "0")}`
-              );
-            }}
-            style={
-              monthButtonStyle
+            onClick={() =>
+              changeMonth(-1)
             }
+            style={monthButtonStyle}
           >
             ←
           </button>
@@ -1058,37 +1277,15 @@ export default function FixedCostsPage() {
                 e.target.value
               )
             }
-            style={
-              monthInputStyle
-            }
+            style={monthInputStyle}
           />
 
           <button
             type="button"
-            onClick={() => {
-              const [
-                y,
-                m,
-              ] = month
-                .split("-")
-                .map(Number);
-
-              const d =
-                new Date(
-                  y,
-                  m,
-                  1
-                );
-
-              setMonth(
-                `${d.getFullYear()}-${String(
-                  d.getMonth() + 1
-                ).padStart(2, "0")}`
-              );
-            }}
-            style={
-              monthButtonStyle
+            onClick={() =>
+              changeMonth(1)
             }
+            style={monthButtonStyle}
           >
             →
           </button>
@@ -1185,12 +1382,14 @@ export default function FixedCostsPage() {
               );
 
             const amount =
-              entry?.amount !=
-              null
-                ? String(
-                    entry.amount
-                  )
-                : "";
+              amountValues[
+                item.id
+              ] ?? "";
+
+            const paymentDate =
+              dateValues[
+                item.id
+              ] ?? "";
 
             const editing =
               editingItemId ===
@@ -1198,14 +1397,11 @@ export default function FixedCostsPage() {
 
             return (
               <div
-                key={
-                  item.id
-                }
+                key={item.id}
                 style={{
                   ...cardStyle,
                   border:
-                    amount ===
-                    ""
+                    amount === ""
                       ? "1px solid #92400e"
                       : "1px solid #374151",
                 }}
@@ -1234,24 +1430,26 @@ export default function FixedCostsPage() {
                           }
                         >
                           支払日：
-                          {item.payment_day
-                            ? `${item.payment_day}日`
+                          {paymentDate
+                            ? paymentDate.replace(
+                                `${month}-`,
+                                ""
+                              ) + "日"
                             : "未設定"}
                         </div>
 
-                        {item.category_id && (
-                          <div
-                            style={
-                              smallTextStyle
-                            }
-                          >
-                            {
-                              getCategoryLabel(
-                                item.category_id
-                              )
-                            }
-                          </div>
-                        )}
+                        <div
+                          style={
+                            smallTextStyle
+                          }
+                        >
+                          {
+                            getCategoryLabel(
+                              categories,
+                              item.category_id
+                            )
+                          }
+                        </div>
                       </div>
 
                       {amount ===
@@ -1267,34 +1465,93 @@ export default function FixedCostsPage() {
                     </div>
 
                     <div
-                      style={
-                        amountRowStyle
-                      }
+                      style={{
+                        marginTop:
+                          "12px",
+                      }}
                     >
-                      <input
-                        type="number"
-                        inputMode="numeric"
-                        defaultValue={
-                          amount
-                        }
-                        placeholder="金額を入力"
-                        onBlur={(
-                          e
-                        ) =>
-                          saveAmount(
-                            item,
-                            e.target
-                              .value
-                          )
-                        }
+                      <label
                         style={
-                          amountInputStyle
+                          labelStyle
+                        }
+                      >
+                        今月の支払日
+                      </label>
+
+                      <input
+                        type="date"
+                        value={
+                          paymentDate
+                        }
+                        onChange={(
+                          e
+                        ) => {
+                          setDateValues(
+                            (
+                              prev
+                            ) => ({
+                              ...prev,
+                              [item.id]:
+                                e.target
+                                  .value,
+                            })
+                          );
+                        }}
+                        style={
+                          dateInputStyle
                         }
                       />
+                    </div>
 
-                      <span>
-                        円
-                      </span>
+                    <div
+                      style={{
+                        marginTop:
+                          "8px",
+                      }}
+                    >
+                      <label
+                        style={
+                          labelStyle
+                        }
+                      >
+                        今月の金額
+                      </label>
+
+                      <div
+                        style={
+                          amountRowStyle
+                        }
+                      >
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          value={
+                            amount
+                          }
+                          onChange={(
+                            e
+                          ) => {
+                            setAmountValues(
+                              (
+                                prev
+                              ) => ({
+                                ...prev,
+                                [item.id]:
+                                  e.target
+                                    .value,
+                              })
+                            );
+                          }}
+                          placeholder="金額を入力"
+                          style={
+                            amountInputStyle
+                          }
+                        />
+
+                        <span>
+                          円
+                        </span>
+                      </div>
                     </div>
 
                     <div
@@ -1302,6 +1559,20 @@ export default function FixedCostsPage() {
                         buttonRowStyle
                       }
                     >
+                      <button
+                        type="button"
+                        onClick={() =>
+                          saveAmountAndDate(
+                            item
+                          )
+                        }
+                        style={
+                          saveButtonStyle
+                        }
+                      >
+                        今月分を保存
+                      </button>
+
                       <button
                         type="button"
                         onClick={() =>
@@ -1410,7 +1681,7 @@ export default function FixedCostsPage() {
                         labelStyle
                       }
                     >
-                      支払日
+                      初期支払日
                     </label>
 
                     <div
@@ -1455,7 +1726,8 @@ export default function FixedCostsPage() {
                         smallTextStyle
                       }
                     >
-                      ※31日がない月は、その月の末日に自動調整します。
+                      ※ここは各月の初期値です。
+                      実際の支払日は毎月変更できます。
                     </div>
 
                     <label
@@ -1663,7 +1935,7 @@ export default function FixedCostsPage() {
                           saveButtonStyle
                         }
                       >
-                        保存
+                        設定を保存
                       </button>
 
                       <button
@@ -1745,7 +2017,7 @@ export default function FixedCostsPage() {
 
 
 /* =========================================================
-   下部固定メニュー
+   下部メニュー
 ========================================================= */
 
 function BottomNav() {
@@ -1810,7 +2082,8 @@ function Nav({
     <a
       href={href}
       style={{
-        textAlign: "center",
+        textAlign:
+          "center",
         color: "#f9fafb",
         textDecoration:
           "none",
@@ -1834,7 +2107,8 @@ function Nav({
 const pageStyle:
   React.CSSProperties = {
   minHeight: "100vh",
-  background: "#020617",
+  background:
+    "#020617",
   color: "#f9fafb",
   paddingBottom:
     "80px",
@@ -1843,17 +2117,22 @@ const pageStyle:
 const contentStyle:
   React.CSSProperties = {
   width: "100%",
-  maxWidth: "600px",
-  margin: "0 auto",
-  padding: "16px",
+  maxWidth:
+    "600px",
+  margin:
+    "0 auto",
+  padding:
+    "16px",
   boxSizing:
     "border-box",
 };
 
 const titleStyle:
   React.CSSProperties = {
-  fontSize: "24px",
-  fontWeight: "bold",
+  fontSize:
+    "24px",
+  fontWeight:
+    "bold",
   marginBottom:
     "16px",
 };
@@ -1866,14 +2145,16 @@ const cardStyle:
     "1px solid #374151",
   borderRadius:
     "12px",
-  padding: "14px",
+  padding:
+    "14px",
   marginBottom:
     "12px",
 };
 
 const monthRowStyle:
   React.CSSProperties = {
-  display: "flex",
+  display:
+    "flex",
   alignItems:
     "center",
   gap: "8px",
@@ -1892,14 +2173,17 @@ const monthButtonStyle:
   background:
     "#1f2937",
   color: "#fff",
-  fontSize: "20px",
-  fontWeight: "bold",
+  fontSize:
+    "20px",
+  fontWeight:
+    "bold",
 };
 
 const monthInputStyle:
   React.CSSProperties = {
   flex: 1,
-  minHeight: "44px",
+  minHeight:
+    "44px",
   background:
     "#0f172a",
   color: "#fff",
@@ -1907,13 +2191,16 @@ const monthInputStyle:
     "1px solid #4b5563",
   borderRadius:
     "8px",
-  padding: "8px",
-  fontSize: "16px",
+  padding:
+    "8px",
+  fontSize:
+    "16px",
 };
 
 const summaryCardStyle:
   React.CSSProperties = {
-  display: "grid",
+  display:
+    "grid",
   gridTemplateColumns:
     "repeat(3, 1fr)",
   gap: "8px",
@@ -1923,36 +2210,42 @@ const summaryCardStyle:
     "1px solid #374151",
   borderRadius:
     "12px",
-  padding: "14px",
+  padding:
+    "14px",
   marginBottom:
     "12px",
 };
 
 const summaryLabelStyle:
   React.CSSProperties = {
-  fontSize: "11px",
-  color: "#9ca3af",
+  fontSize:
+    "11px",
+  color:
+    "#9ca3af",
   marginBottom:
     "4px",
 };
 
 const summaryNumberStyle:
   React.CSSProperties = {
-  fontSize: "18px",
+  fontSize:
+    "18px",
   fontWeight:
     "bold",
 };
 
 const summaryAmountStyle:
   React.CSSProperties = {
-  fontSize: "16px",
+  fontSize:
+    "16px",
   fontWeight:
     "bold",
 };
 
 const itemHeaderStyle:
   React.CSSProperties = {
-  display: "flex",
+  display:
+    "flex",
   alignItems:
     "center",
   justifyContent:
@@ -1962,7 +2255,8 @@ const itemHeaderStyle:
 
 const itemNameStyle:
   React.CSSProperties = {
-  fontSize: "17px",
+  fontSize:
+    "17px",
   fontWeight:
     "bold",
   marginBottom:
@@ -1971,27 +2265,46 @@ const itemNameStyle:
 
 const smallTextStyle:
   React.CSSProperties = {
-  fontSize: "11px",
-  color: "#9ca3af",
+  fontSize:
+    "11px",
+  color:
+    "#9ca3af",
 };
 
 const warningBadgeStyle:
   React.CSSProperties = {
   background:
     "#78350f",
-  color: "#fcd34d",
+  color:
+    "#fcd34d",
   padding:
     "4px 8px",
   borderRadius:
     "999px",
-  fontSize: "11px",
+  fontSize:
+    "11px",
   fontWeight:
     "bold",
 };
 
+const labelStyle:
+  React.CSSProperties = {
+  display:
+    "block",
+  marginTop:
+    "10px",
+  marginBottom:
+    "4px",
+  fontSize:
+    "13px",
+  color:
+    "#d1d5db",
+};
+
 const amountRowStyle:
   React.CSSProperties = {
-  display: "flex",
+  display:
+    "flex",
   alignItems:
     "center",
   gap: "6px",
@@ -2003,22 +2316,86 @@ const amountInputStyle:
   minWidth: 0,
   background:
     "#020617",
-  color: "#fff",
+  color:
+    "#fff",
   border:
     "1px solid #4b5563",
   borderRadius:
     "8px",
-  padding: "11px",
-  fontSize: "18px",
+  padding:
+    "11px",
+  fontSize:
+    "18px",
   textAlign:
     "right",
   boxSizing:
     "border-box",
 };
 
+const dateInputStyle:
+  React.CSSProperties = {
+  width:
+    "100%",
+  boxSizing:
+    "border-box",
+  background:
+    "#020617",
+  color:
+    "#fff",
+  border:
+    "1px solid #4b5563",
+  borderRadius:
+    "8px",
+  padding:
+    "11px",
+  fontSize:
+    "16px",
+};
+
+const textInputStyle:
+  React.CSSProperties = {
+  width:
+    "100%",
+  boxSizing:
+    "border-box",
+  background:
+    "#020617",
+  color:
+    "#fff",
+  border:
+    "1px solid #4b5563",
+  borderRadius:
+    "8px",
+  padding:
+    "10px",
+  fontSize:
+    "15px",
+};
+
+const selectStyle:
+  React.CSSProperties = {
+  width:
+    "100%",
+  boxSizing:
+    "border-box",
+  background:
+    "#020617",
+  color:
+    "#fff",
+  border:
+    "1px solid #4b5563",
+  borderRadius:
+    "8px",
+  padding:
+    "10px",
+  fontSize:
+    "15px",
+};
+
 const buttonRowStyle:
   React.CSSProperties = {
-  display: "flex",
+  display:
+    "flex",
   flexWrap:
     "wrap",
   gap: "6px",
@@ -2032,8 +2409,10 @@ const saveButtonStyle:
     "10px 14px",
   background:
     "#166534",
-  color: "#fff",
-  border: "none",
+  color:
+    "#fff",
+  border:
+    "none",
   borderRadius:
     "8px",
   fontWeight:
@@ -2046,7 +2425,8 @@ const secondaryButtonStyle:
     "10px 14px",
   background:
     "#374151",
-  color: "#fff",
+  color:
+    "#fff",
   border:
     "1px solid #6b7280",
   borderRadius:
@@ -2059,10 +2439,12 @@ const moveButtonStyle:
   React.CSSProperties = {
   padding:
     "10px 12px",
-  minWidth: "56px",
+  minWidth:
+    "56px",
   background:
     "#374151",
-  color: "#fff",
+  color:
+    "#fff",
   border:
     "1px solid #6b7280",
   borderRadius:
@@ -2077,56 +2459,14 @@ const deleteButtonStyle:
     "10px 12px",
   background:
     "#7f1d1d",
-  color: "#fff",
+  color:
+    "#fff",
   border:
     "1px solid #991b1b",
   borderRadius:
     "8px",
   fontWeight:
     "bold",
-};
-
-const labelStyle:
-  React.CSSProperties = {
-  display: "block",
-  marginTop:
-    "10px",
-  marginBottom:
-    "4px",
-  fontSize: "13px",
-  color: "#d1d5db",
-};
-
-const textInputStyle:
-  React.CSSProperties = {
-  width: "100%",
-  boxSizing:
-    "border-box",
-  background:
-    "#020617",
-  color: "#fff",
-  border:
-    "1px solid #4b5563",
-  borderRadius:
-    "8px",
-  padding: "10px",
-  fontSize: "15px",
-};
-
-const selectStyle:
-  React.CSSProperties = {
-  width: "100%",
-  boxSizing:
-    "border-box",
-  background:
-    "#020617",
-  color: "#fff",
-  border:
-    "1px solid #4b5563",
-  borderRadius:
-    "8px",
-  padding: "10px",
-  fontSize: "15px",
 };
 
 const messageStyle:
@@ -2137,8 +2477,10 @@ const messageStyle:
     "1px solid #374151",
   borderRadius:
     "8px",
-  padding: "10px",
+  padding:
+    "10px",
   marginTop:
     "10px",
-  fontSize: "13px",
+  fontSize:
+    "13px",
 };
