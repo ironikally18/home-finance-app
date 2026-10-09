@@ -130,6 +130,14 @@ export default function Page() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
 
+  // 履歴の修正
+  const [historyAlias, setHistoryAlias] = useState("");
+  const [historyLimit, setHistoryLimit] = useState(20);
+  const [editBalId, setEditBalId] = useState<string | null>(null);
+  const [editBalDate, setEditBalDate] = useState("");
+  const [editBalAlias, setEditBalAlias] = useState("");
+  const [editBalAmount, setEditBalAmount] = useState("");
+
   useEffect(() => {
     setDate(todayLocal());
 
@@ -183,6 +191,8 @@ export default function Page() {
     setPinInput2("");
     setPinMessage("");
     setShowPinChange(false);
+    setEditBalId(null);
+    setEditBalAmount("");
     setPinState("locked");
   }, []);
 
@@ -327,6 +337,70 @@ export default function Page() {
     for (const a of aliases) sum += latest.get(a.id)?.amount ?? 0;
     return sum;
   }, [aliases, latest]);
+
+  // 履歴（新しい日付が上）
+  const history = useMemo(
+    () => balances.filter((b) => !historyAlias || b.alias_id === historyAlias).slice().reverse(),
+    [balances, historyAlias]
+  );
+
+  const aliasName = (id: string) => aliases.find((a) => a.id === id)?.alias_name ?? "-";
+
+  const startEditBalance = (b: BalanceRow) => {
+    setEditBalId(b.id);
+    setEditBalDate(b.balance_date);
+    setEditBalAlias(b.alias_id);
+    setEditBalAmount(String(b.amount));
+  };
+
+  const cancelEditBalance = () => {
+    setEditBalId(null);
+    setEditBalAmount("");
+  };
+
+  const handleUpdateBalance = async () => {
+    if (!editBalId) return;
+    if (!editBalDate) {
+      setMessage("日付を入力してください");
+      return;
+    }
+    const yen = Number(editBalAmount.replace(/[,\s]/g, ""));
+    if (!editBalAmount || !Number.isInteger(yen) || yen < 0) {
+      setMessage("残高は0以上の整数で入力してください");
+      return;
+    }
+    const { error } = await supabase
+      .from("asset_balances")
+      .update({
+        alias_id: editBalAlias,
+        balance_date: editBalDate,
+        amount: yen,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", editBalId);
+    if (error) {
+      setMessage(
+        error.code === "23505"
+          ? "同じ日付・同じ項目の記録がすでにあります。先にそちらを修正・削除してください"
+          : `修正に失敗しました: ${error.message}`
+      );
+      return;
+    }
+    cancelEditBalance();
+    setMessage("修正しました");
+    await load();
+  };
+
+  const handleDeleteBalance = async (b: BalanceRow) => {
+    if (!window.confirm(`${b.balance_date}「${aliasName(b.alias_id)}」の記録を削除します。よろしいですか？`)) return;
+    const { error } = await supabase.from("asset_balances").delete().eq("id", b.id);
+    if (error) {
+      setMessage(`削除に失敗しました: ${error.message}`);
+      return;
+    }
+    if (editBalId === b.id) cancelEditBalance();
+    await load();
+  };
 
   const handleSave = async () => {
     if (!user) return;
@@ -565,6 +639,103 @@ export default function Page() {
               保存
             </button>
             <div style={{ fontSize: "12px", color: "#9ca3af" }}>同じ日付・同じ項目は上書きされます</div>
+          </div>
+        </section>
+
+        {/* 履歴（修正・削除） */}
+        <section style={card}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: "8px",
+              marginBottom: "8px",
+            }}
+          >
+            <span style={{ fontWeight: "bold" }}>履歴</span>
+            <select
+              value={historyAlias}
+              onChange={(e) => {
+                setHistoryAlias(e.target.value);
+                setHistoryLimit(20);
+              }}
+              style={{ ...field, width: "auto" }}
+            >
+              <option value="">すべて</option>
+              {aliases.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.alias_name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div style={{ display: "grid", gap: "8px" }}>
+            {history.length === 0 && <div style={{ color: "#9ca3af" }}>記録がありません</div>}
+            {history.slice(0, historyLimit).map((b) =>
+              editBalId === b.id ? (
+                <div
+                  key={b.id}
+                  style={{ display: "grid", gap: "8px", padding: "8px", background: "#1f2937", borderRadius: "8px" }}
+                >
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+                    <input type="date" value={editBalDate} onChange={(e) => setEditBalDate(e.target.value)} style={field} />
+                    <select value={editBalAlias} onChange={(e) => setEditBalAlias(e.target.value)} style={field}>
+                      {aliases.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.alias_name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <input
+                    inputMode="numeric"
+                    placeholder="残高（1円単位）"
+                    value={editBalAmount}
+                    onChange={(e) => setEditBalAmount(e.target.value)}
+                    style={field}
+                  />
+                  <div style={{ display: "flex", gap: "6px" }}>
+                    <button onClick={handleUpdateBalance} style={btn}>
+                      修正を保存
+                    </button>
+                    <button onClick={cancelEditBalance} style={btnSub}>
+                      戻す
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div
+                  key={b.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "6px",
+                    borderBottom: "1px solid #1f2937",
+                    paddingBottom: "6px",
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: "11px", color: "#9ca3af" }}>{b.balance_date}</div>
+                    <div>
+                      {aliasName(b.alias_id)}
+                      <span style={{ marginLeft: "10px", fontVariantNumeric: "tabular-nums" }}>{toMan(b.amount)}</span>
+                    </div>
+                  </div>
+                  <button onClick={() => startEditBalance(b)} style={{ ...btnSub, padding: "6px 10px" }}>
+                    修正
+                  </button>
+                  <button onClick={() => handleDeleteBalance(b)} style={{ ...btn, background: "#dc2626", padding: "6px 10px" }}>
+                    削除
+                  </button>
+                </div>
+              )
+            )}
+            {history.length > historyLimit && (
+              <button onClick={() => setHistoryLimit((n) => n + 20)} style={btnSub}>
+                もっと見る
+              </button>
+            )}
           </div>
         </section>
 
