@@ -664,17 +664,19 @@ function BottomNav() {
         background: "#020617",
         borderTop: "1px solid #374151",
         display: "grid",
-        gridTemplateColumns: "repeat(6, 1fr)",
+        gridTemplateColumns: "repeat(8, 1fr)",
         padding: "4px 2px",
         zIndex: 50,
       }}
     >
       <Nav href="/" label="🏠" />
+      <Nav href="/fixed-costs" label="固定費" />
       <Nav href="/summary" label="📊" />
       <Nav href="/graph" label="📈" />
       <Nav href="/calendar" label="📅" />
       <Nav href="/dashboard" label="指標" />
       <Nav href="/kids" label="👦" />
+      <Nav href="/memo" label="📝" />
     </div>
   );
 }
