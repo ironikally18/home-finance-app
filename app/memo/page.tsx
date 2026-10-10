@@ -2,6 +2,17 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient, User } from "@supabase/supabase-js";
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from "@dnd-kit/core";
+import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
@@ -86,6 +97,19 @@ const field: React.CSSProperties = {
   background: "#1f2937",
   color: "#f9fafb",
   fontSize: "16px",
+};
+
+// type="password" だとブラウザの「パスワードを更新しますか？」が出るため、
+// type="text" + 伏せ字表示にしてパスワードマネージャーの対象から外す
+const pinField = { ...field, WebkitTextSecurity: "disc" } as React.CSSProperties;
+
+const dragHandleStyle: React.CSSProperties = {
+  cursor: "grab",
+  padding: "4px 8px",
+  color: "#9ca3af",
+  fontSize: "18px",
+  touchAction: "none",
+  userSelect: "none",
 };
 
 const btn: React.CSSProperties = {
@@ -338,6 +362,24 @@ export default function Page() {
     return sum;
   }, [aliases, latest]);
 
+  const handleReorder = async (reordered: AliasRow[]) => {
+    if (!user) return;
+    const rows = reordered.map((a, i) => ({ ...a, display_order: i + 1 }));
+    setAliases(rows);
+    const { error } = await supabase.from("asset_aliases").upsert(
+      rows.map((a) => ({
+        id: a.id,
+        user_id: user.id,
+        alias_name: a.alias_name,
+        display_order: a.display_order,
+      }))
+    );
+    if (error) {
+      setMessage(`並び替えの保存に失敗しました: ${error.message}`);
+      await load();
+    }
+  };
+
   // 履歴（新しい日付が上）
   const history = useMemo(
     () => balances.filter((b) => !historyAlias || b.alias_id === historyAlias).slice().reverse(),
@@ -513,7 +555,9 @@ export default function Page() {
           <div style={{ display: "grid", gap: "10px" }}>
             <div>{isSetup ? "このページ用のPINを設定してください（4〜8桁の数字）" : "PINを入力してください"}</div>
             <input
-              type="password"
+              type="text"
+                data-1p-ignore
+                data-lpignore="true"
               inputMode="numeric"
               autoComplete="off"
               value={pinInput}
@@ -522,11 +566,13 @@ export default function Page() {
                 if (e.key === "Enter" && !isSetup) void handleUnlock();
               }}
               placeholder={isSetup ? "PIN" : ""}
-              style={field}
+              style={pinField}
             />
             {isSetup && (
               <input
-                type="password"
+                type="text"
+                data-1p-ignore
+                data-lpignore="true"
                 inputMode="numeric"
                 autoComplete="off"
                 value={pinInput2}
@@ -535,7 +581,7 @@ export default function Page() {
                   if (e.key === "Enter") void handleSetupPin();
                 }}
                 placeholder="PIN（確認）"
-                style={field}
+                style={pinField}
               />
             )}
             <button onClick={() => (isSetup ? void handleSetupPin() : void handleUnlock())} style={btn}>
@@ -743,37 +789,21 @@ export default function Page() {
         <section style={card}>
           <div style={{ marginBottom: "8px", fontWeight: "bold" }}>項目の管理</div>
           <div style={{ display: "grid", gap: "8px" }}>
-            {aliases.map((a) => (
-              <div key={a.id} style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-                {editingId === a.id ? (
-                  <>
-                    <input value={editName} onChange={(e) => setEditName(e.target.value)} style={{ ...field, flex: 1 }} />
-                    <button onClick={() => handleRename(a.id)} style={btn}>
-                      保存
-                    </button>
-                    <button onClick={() => setEditingId(null)} style={btnSub}>
-                      戻す
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <div style={{ flex: 1 }}>{a.alias_name}</div>
-                    <button
-                      onClick={() => {
-                        setEditingId(a.id);
-                        setEditName(a.alias_name);
-                      }}
-                      style={btnSub}
-                    >
-                      編集
-                    </button>
-                    <button onClick={() => handleDelete(a)} style={{ ...btn, background: "#dc2626" }}>
-                      削除
-                    </button>
-                  </>
-                )}
-              </div>
-            ))}
+            <div style={{ fontSize: "12px", color: "#9ca3af" }}>⠿ をドラッグして並び替え</div>
+            <SortableAliasList
+              aliases={aliases}
+              editingId={editingId}
+              editName={editName}
+              setEditName={setEditName}
+              onStartEdit={(a) => {
+                setEditingId(a.id);
+                setEditName(a.alias_name);
+              }}
+              onCancel={() => setEditingId(null)}
+              onRename={handleRename}
+              onDelete={handleDelete}
+              onReorder={handleReorder}
+            />
             <div style={{ display: "flex", gap: "6px" }}>
               <input
                 placeholder="新しい項目名（別名）"
@@ -793,22 +823,26 @@ export default function Page() {
           {showPinChange ? (
             <div style={{ display: "grid", gap: "8px" }}>
               <input
-                type="password"
+                type="text"
+                data-1p-ignore
+                data-lpignore="true"
                 inputMode="numeric"
                 autoComplete="off"
                 placeholder="現在のPIN"
                 value={curPin}
                 onChange={(e) => setCurPin(e.target.value)}
-                style={field}
+                style={pinField}
               />
               <input
-                type="password"
+                type="text"
+                data-1p-ignore
+                data-lpignore="true"
                 inputMode="numeric"
                 autoComplete="off"
                 placeholder="新しいPIN（4〜8桁）"
                 value={newPin}
                 onChange={(e) => setNewPin(e.target.value)}
-                style={field}
+                style={pinField}
               />
               <div style={{ display: "flex", gap: "6px" }}>
                 <button onClick={handleChangePin} style={btn}>
@@ -1027,5 +1061,103 @@ function Nav({ href, label }: { href: string; label: string }) {
     >
       {label}
     </a>
+  );
+}
+
+function SortableRow({ id, children }: { id: string; children: React.ReactNode }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.5 : 1,
+        display: "flex",
+        alignItems: "center",
+        gap: "8px",
+        borderBottom: "1px solid #1f2937",
+        paddingBottom: "6px",
+      }}
+    >
+      <span {...attributes} {...listeners} style={dragHandleStyle}>
+        ⠿
+      </span>
+      <div style={{ flex: 1 }}>{children}</div>
+    </div>
+  );
+}
+
+function SortableAliasList({
+  aliases,
+  editingId,
+  editName,
+  setEditName,
+  onStartEdit,
+  onCancel,
+  onRename,
+  onDelete,
+  onReorder,
+}: {
+  aliases: AliasRow[];
+  editingId: string | null;
+  editName: string;
+  setEditName: (v: string) => void;
+  onStartEdit: (a: AliasRow) => void;
+  onCancel: () => void;
+  onRename: (id: string) => void;
+  onDelete: (a: AliasRow) => void;
+  onReorder: (reordered: AliasRow[]) => void;
+}) {
+  const [local, setLocal] = useState(aliases);
+  useEffect(() => {
+    setLocal(aliases);
+  }, [aliases]);
+  const sensors = useSensors(useSensor(PointerSensor), useSensor(TouchSensor));
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = local.findIndex((a) => a.id === active.id);
+    const newIndex = local.findIndex((a) => a.id === over.id);
+    const reordered = arrayMove(local, oldIndex, newIndex);
+    setLocal(reordered);
+    onReorder(reordered);
+  };
+
+  return (
+    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+      <SortableContext items={local.map((a) => a.id)} strategy={verticalListSortingStrategy}>
+        <div style={{ display: "grid", gap: "8px" }}>
+          {local.map((a) => (
+            <SortableRow key={a.id} id={a.id}>
+              <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                {editingId === a.id ? (
+                  <>
+                    <input value={editName} onChange={(e) => setEditName(e.target.value)} style={{ ...field, flex: 1 }} />
+                    <button onClick={() => onRename(a.id)} style={btn}>
+                      保存
+                    </button>
+                    <button onClick={onCancel} style={btnSub}>
+                      戻す
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <div style={{ flex: 1 }}>{a.alias_name}</div>
+                    <button onClick={() => onStartEdit(a)} style={btnSub}>
+                      編集
+                    </button>
+                    <button onClick={() => onDelete(a)} style={{ ...btn, background: "#dc2626" }}>
+                      削除
+                    </button>
+                  </>
+                )}
+              </div>
+            </SortableRow>
+          ))}
+        </div>
+      </SortableContext>
+    </DndContext>
   );
 }
