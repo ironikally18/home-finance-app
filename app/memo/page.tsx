@@ -45,11 +45,29 @@ const MAX_FAILS = 5;
 const LOCKOUT_MS = 30 * 1000;
 
 // 1万円単位・小数1桁（1,000円まで）。単位や「円」は表示しない
-const toMan = (yen: number) =>
-  (yen / 10000).toLocaleString("ja-JP", {
+const toMan = (yen: number) => {
+  const v = Math.round(yen / 1000) / 10;
+  return (v === 0 ? 0 : v).toLocaleString("ja-JP", {
     minimumFractionDigits: 1,
     maximumFractionDigits: 1,
   });
+};
+
+// 入力値を円（整数）に変換。マイナス可。全角のマイナスや「ー」も受け付ける
+const parseYen = (v: string): number | null => {
+  const t = v.replace(/[,\s]/g, "").replace(/[−ー－]/g, "-");
+  if (!/^-?\d+$/.test(t)) return null;
+  const n = Number(t);
+  return Number.isSafeInteger(n) ? n : null;
+};
+
+// 先頭の「-」を付け外し（スマホの数字キーボードにマイナスがない場合用）
+const toggleMinus = (v: string) => {
+  const t = v.trim();
+  return t.startsWith("-") ? t.slice(1) : `-${t}`;
+};
+
+const amountColor = (yen: number) => (yen < 0 ? "#fca5a5" : undefined);
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
 const todayLocal = () => {
@@ -406,9 +424,9 @@ export default function Page() {
       setMessage("日付を入力してください");
       return;
     }
-    const yen = Number(editBalAmount.replace(/[,\s]/g, ""));
-    if (!editBalAmount || !Number.isInteger(yen) || yen < 0) {
-      setMessage("残高は0以上の整数で入力してください");
+    const yen = parseYen(editBalAmount);
+    if (yen === null) {
+      setMessage("残高は整数で入力してください（マイナス可）");
       return;
     }
     const { error } = await supabase
@@ -454,9 +472,9 @@ export default function Page() {
       setMessage("日付を入力してください");
       return;
     }
-    const yen = Number(amount.replace(/[,\s]/g, ""));
-    if (!amount || !Number.isInteger(yen) || yen < 0) {
-      setMessage("残高は0以上の整数で入力してください");
+    const yen = parseYen(amount);
+    if (yen === null) {
+      setMessage("残高は整数で入力してください（マイナス可）");
       return;
     }
     const { error } = await supabase.from("asset_balances").upsert(
@@ -630,7 +648,7 @@ export default function Page() {
                     <span style={{ color: COLORS[i % COLORS.length], marginRight: "6px" }}>●</span>
                     {a.alias_name}
                   </span>
-                  <span style={{ fontVariantNumeric: "tabular-nums", fontSize: "20px" }}>
+                  <span style={{ fontVariantNumeric: "tabular-nums", fontSize: "20px", color: b ? amountColor(b.amount) : undefined }}>
                     {b ? toMan(b.amount) : "-"}
                     {b && <span style={{ marginLeft: "8px", fontSize: "11px", color: "#9ca3af" }}>{b.balance_date}</span>}
                   </span>
@@ -648,7 +666,7 @@ export default function Page() {
                 }}
               >
                 <span>合計</span>
-                <span style={{ fontVariantNumeric: "tabular-nums", fontSize: "22px", fontWeight: "bold" }}>
+                <span style={{ fontVariantNumeric: "tabular-nums", fontSize: "22px", fontWeight: "bold", color: amountColor(total) }}>
                   {toMan(total)}
                 </span>
               </div>
@@ -674,13 +692,18 @@ export default function Page() {
                 ))}
               </select>
             </div>
-            <input
-              inputMode="numeric"
-              placeholder="残高（1円単位）"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              style={field}
-            />
+            <div style={{ display: "flex", gap: "6px" }}>
+              <input
+                inputMode="numeric"
+                placeholder="残高（1円単位・マイナス可）"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                style={{ ...field, flex: 1 }}
+              />
+              <button type="button" onClick={() => setAmount(toggleMinus(amount))} style={{ ...btnSub, minWidth: "48px" }}>
+                ±
+              </button>
+            </div>
             <button onClick={handleSave} style={btn}>
               保存
             </button>
@@ -734,13 +757,22 @@ export default function Page() {
                       ))}
                     </select>
                   </div>
-                  <input
-                    inputMode="numeric"
-                    placeholder="残高（1円単位）"
-                    value={editBalAmount}
-                    onChange={(e) => setEditBalAmount(e.target.value)}
-                    style={field}
-                  />
+                  <div style={{ display: "flex", gap: "6px" }}>
+                    <input
+                      inputMode="numeric"
+                      placeholder="残高（1円単位・マイナス可）"
+                      value={editBalAmount}
+                      onChange={(e) => setEditBalAmount(e.target.value)}
+                      style={{ ...field, flex: 1 }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setEditBalAmount(toggleMinus(editBalAmount))}
+                      style={{ ...btnSub, minWidth: "48px" }}
+                    >
+                      ±
+                    </button>
+                  </div>
                   <div style={{ display: "flex", gap: "6px" }}>
                     <button onClick={handleUpdateBalance} style={btn}>
                       修正を保存
@@ -765,7 +797,9 @@ export default function Page() {
                     <div style={{ fontSize: "11px", color: "#9ca3af" }}>{b.balance_date}</div>
                     <div>
                       {aliasName(b.alias_id)}
-                      <span style={{ marginLeft: "10px", fontVariantNumeric: "tabular-nums" }}>{toMan(b.amount)}</span>
+                      <span style={{ marginLeft: "10px", fontVariantNumeric: "tabular-nums", color: amountColor(b.amount) }}>
+                        {toMan(b.amount)}
+                      </span>
                     </div>
                   </div>
                   <button onClick={() => startEditBalance(b)} style={{ ...btnSub, padding: "6px 10px" }}>
