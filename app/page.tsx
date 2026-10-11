@@ -1086,7 +1086,7 @@ export default function Page() {
             style={{
               padding: "10px",
               background: "#2563eb",
-              color: "#fff",
+              color: "#f30b0b",
               border: "none",
               borderRadius: "8px",
             }}
