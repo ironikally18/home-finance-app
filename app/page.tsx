@@ -1008,6 +1008,18 @@ export default function Page() {
 
   return (
     <div style={{ maxWidth: "560px", margin: "0 auto", padding: "16px", paddingBottom: "88px" }}>
+      <style>{`
+        select {
+          color-scheme: dark;
+          background-color: #1f2937 !important;
+          color: #f9fafb !important;
+          border: 1px solid #4b5563;
+        }
+        select option {
+          background-color: #1f2937;
+          color: #f9fafb;
+        }
+      `}</style>
       <div
         style={{
           display: "flex",
