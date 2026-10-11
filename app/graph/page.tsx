@@ -43,13 +43,47 @@ const COLORS = [
   "#84cc16",
 ];
 
+const PAGE_SIZE = 1000;
+
+// ---- 年月ヘルパー（"YYYY-MM" 形式） ----
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+const currentYm = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`;
+};
+
+const addMonths = (ym: string, diff: number) => {
+  const [y, m] = ym.split("-").map(Number);
+  const d = new Date(y, m - 1 + diff, 1);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`;
+};
+
+// start〜end（両端含む）の月を全部並べる
+const listMonths = (start: string, end: string) => {
+  const result: string[] = [];
+  let cur = start;
+  // 念のため上限（約40年）
+  for (let i = 0; i < 480 && cur <= end; i++) {
+    result.push(cur);
+    cur = addMonths(cur, 1);
+  }
+  return result;
+};
+
+type Preset = "6" | "12" | "24" | "all" | "custom";
+
 export default function GraphPage() {
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [rows, setRows] = useState<Row[]>([]);
-  const [months, setMonths] = useState(12);
   const [selectedCategory, setSelectedCategory] = useState("");
   const [message, setMessage] = useState("");
+
+  // 期間（初期値：今月を終了月とした直近12か月）
+  const [preset, setPreset] = useState<Preset>("12");
+  const [startMonth, setStartMonth] = useState(() => addMonths(currentYm(), -11));
+  const [endMonth, setEndMonth] = useState(() => currentYm());
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -66,33 +100,48 @@ export default function GraphPage() {
     if (user) void loadData();
   }, [user]);
 
+  // 1000件ずつ .range() で繰り返し、全件読み込む
   const loadData = async () => {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) return;
 
     setMessage("");
 
-    const { data, error } = await supabase
-      .from("transaction_records")
-      .select(`
-        txn_date,
-        amount,
-        direction,
-        categories:category_id (
-          major_category,
-          minor_category
-        )
-      `)
-      .eq("user_id", session.user.id)
-      .eq("direction", "expense")
-      .order("txn_date", { ascending: true });
+    const all: Row[] = [];
+    let from = 0;
 
-    if (error) {
-      setMessage("読込エラー: " + error.message);
-      return;
+    while (true) {
+      const { data, error } = await supabase
+        .from("transaction_records")
+        .select(`
+          txn_date,
+          amount,
+          direction,
+          categories:category_id (
+            major_category,
+            minor_category
+          )
+        `)
+        .eq("user_id", session.user.id)
+        .eq("direction", "expense")
+        // 同じ日付の行がページ境界で重複・欠落しないよう id でも並べる
+        .order("txn_date", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, from + PAGE_SIZE - 1);
+
+      if (error) {
+        setMessage("読込エラー: " + error.message);
+        return;
+      }
+
+      const chunk = (data as unknown as Row[]) || [];
+      all.push(...chunk);
+
+      if (chunk.length < PAGE_SIZE) break;
+      from += PAGE_SIZE;
     }
 
-    setRows((data as Row[]) || []);
+    setRows(all);
   };
 
   const getCategoryName = (r: Row) => {
@@ -103,64 +152,106 @@ export default function GraphPage() {
     return category?.major_category || "未分類";
   };
 
+  // ---- 期間の操作 ----
+  const applyPreset = (value: Preset) => {
+    setPreset(value);
+    const cur = currentYm();
+
+    if (value === "custom") return;
+
+    if (value === "all") {
+      const first = rows.length > 0 ? rows[0].txn_date.slice(0, 7) : cur;
+      setStartMonth(first);
+      setEndMonth(cur);
+      return;
+    }
+
+    setStartMonth(addMonths(cur, -(Number(value) - 1)));
+    setEndMonth(cur);
+  };
+
+  const onChangeStart = (v: string) => {
+    if (!v) return;
+    setStartMonth(v);
+    setPreset("custom");
+  };
+
+  const onChangeEnd = (v: string) => {
+    if (!v) return;
+    setEndMonth(v);
+    setPreset("custom");
+  };
+
+  // 開始と終了が逆でも動くようにする
+  const rangeStart = startMonth <= endMonth ? startMonth : endMonth;
+  const rangeEnd = startMonth <= endMonth ? endMonth : startMonth;
+
+  const monthList = useMemo(
+    () => listMonths(rangeStart, rangeEnd),
+    [rangeStart, rangeEnd]
+  );
+
+  // 期間内の行だけに絞る
+  const rangeRows = useMemo(
+    () =>
+      rows.filter((r) => {
+        const m = r.txn_date.slice(0, 7);
+        return m >= rangeStart && m <= rangeEnd;
+      }),
+    [rows, rangeStart, rangeEnd]
+  );
+
   const { chartData, categoryNames } = useMemo(() => {
+    // 期間内の全ての月を最初に0円で用意しておく
     const map = new Map<string, Record<string, number | string>>();
+    monthList.forEach((month) => map.set(month, { month }));
+
     const categorySet = new Set<string>();
 
-    rows.forEach((r) => {
+    rangeRows.forEach((r) => {
       const month = r.txn_date.slice(0, 7);
       const major = getCategoryName(r);
       const amount = Number(r.amount || 0);
 
       categorySet.add(major);
 
-      if (!map.has(month)) {
-        map.set(month, { month });
-      }
-
-      const item = map.get(month)!;
+      const item = map.get(month);
+      if (!item) return;
       item[major] = Number(item[major] || 0) + amount;
     });
 
-    let data = Array.from(map.values()).sort((a, b) =>
-      String(a.month).localeCompare(String(b.month))
-    );
-
-    if (months > 0) {
-      data = data.slice(-months);
-    }
-
     return {
-      chartData: data,
+      chartData: Array.from(map.values()),
       categoryNames: Array.from(categorySet).sort((a, b) =>
         a.localeCompare(b, "ja")
       ),
     };
-  }, [rows, months]);
+  }, [rangeRows, monthList]);
+
+  // 費目プルダウンの候補は、期間にかかわらず全データの費目から作る
+  const allCategoryNames = useMemo(() => {
+    const set = new Set<string>();
+    rows.forEach((r) => set.add(getCategoryName(r)));
+    return Array.from(set).sort((a, b) => a.localeCompare(b, "ja"));
+  }, [rows]);
 
   const selectedCategoryData = useMemo(() => {
     if (!selectedCategory) return [];
 
     const map = new Map<string, number>();
+    monthList.forEach((month) => map.set(month, 0));
 
-    rows.forEach((r) => {
-      const major = getCategoryName(r);
-      if (major !== selectedCategory) return;
-
+    rangeRows.forEach((r) => {
+      if (getCategoryName(r) !== selectedCategory) return;
       const month = r.txn_date.slice(0, 7);
       map.set(month, (map.get(month) || 0) + Number(r.amount || 0));
     });
 
-    let data = Array.from(map.entries())
-      .map(([month, amount]) => ({ month, amount }))
-      .sort((a, b) => a.month.localeCompare(b.month));
-
-    if (months > 0) {
-      data = data.slice(-months);
-    }
-
-    return data;
-  }, [rows, selectedCategory, months]);
+    return Array.from(map.entries()).map(([month, amount]) => ({
+      month,
+      amount,
+    }));
+  }, [rangeRows, monthList, selectedCategory]);
 
   const selectedCategoryTotal = useMemo(() => {
     return selectedCategoryData.reduce((sum, row) => sum + row.amount, 0);
@@ -202,17 +293,39 @@ export default function GraphPage() {
         }}
       >
         <div>
-          <div style={{ marginBottom: "4px" }}>表示月数</div>
+          <div style={{ marginBottom: "4px" }}>表示期間（クイック選択）</div>
           <select
-            value={months}
-            onChange={(e) => setMonths(Number(e.target.value))}
+            value={preset}
+            onChange={(e) => applyPreset(e.target.value as Preset)}
             style={selectStyle}
           >
-            <option value={6}>直近6か月</option>
-            <option value={12}>直近12か月</option>
-            <option value={24}>直近24か月</option>
-            <option value={0}>すべて</option>
+            <option value="6">直近6か月</option>
+            <option value="12">直近12か月</option>
+            <option value="24">直近24か月</option>
+            <option value="all">すべて</option>
+            <option value="custom">指定期間</option>
           </select>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+          <div>
+            <div style={{ marginBottom: "4px" }}>開始月</div>
+            <input
+              type="month"
+              value={startMonth}
+              onChange={(e) => onChangeStart(e.target.value)}
+              style={selectStyle}
+            />
+          </div>
+          <div>
+            <div style={{ marginBottom: "4px" }}>終了月</div>
+            <input
+              type="month"
+              value={endMonth}
+              onChange={(e) => onChangeEnd(e.target.value)}
+              style={selectStyle}
+            />
+          </div>
         </div>
 
         <div>
@@ -223,7 +336,7 @@ export default function GraphPage() {
             style={selectStyle}
           >
             <option value="">選択なし</option>
-            {categoryNames.map((name) => (
+            {allCategoryNames.map((name) => (
               <option key={name} value={name}>
                 {name}
               </option>
@@ -358,6 +471,7 @@ const selectStyle: React.CSSProperties = {
   color: "#f9fafb",
   border: "1px solid #374151",
   borderRadius: "8px",
+  boxSizing: "border-box",
 };
 
 const scrollWrapStyle: React.CSSProperties = {
