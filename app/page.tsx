@@ -1018,7 +1018,7 @@ export default function Page() {
         }
         @media (min-width: 768px) {
           .page-root[data-screen="list"] {
-            max-width: 1200px;
+            max-width: 1500px;
           }
         }
         select {
