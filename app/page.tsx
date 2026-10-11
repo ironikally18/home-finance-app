@@ -1007,8 +1007,20 @@ export default function Page() {
 
 
   return (
-    <div style={{ maxWidth: "560px", margin: "0 auto", padding: "16px", paddingBottom: "88px" }}>
+    <div
+      className="page-root"
+      data-screen={screenMode}
+      style={{ margin: "0 auto", padding: "16px", paddingBottom: "88px" }}
+    >
       <style>{`
+        .page-root {
+          max-width: 560px;
+        }
+        @media (min-width: 768px) {
+          .page-root[data-screen="list"] {
+            max-width: 1100px;
+          }
+        }
         select {
           color-scheme: dark;
           background-color: #1f2937 !important;
