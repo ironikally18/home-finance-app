@@ -70,7 +70,11 @@ function getDefaultPaymentDate(
   month: string,
   paymentDay: number | null
 ) {
-  if (!paymentDay) return "";
+  /*
+   * 支払日が未設定の項目は
+   * 選択中の月の1日を初期値にする
+   */
+  if (!paymentDay) return month + "-01";
 
   const [year, monthNumber] = month
     .split("-")
@@ -453,13 +457,11 @@ export default function FixedCostsPage() {
     }
 
     /*
-     * 金額も日付も空欄
-     * → その月の登録を削除
+     * 金額が空欄
+     * → 日付だけの登録は作らず、
+     *   既存の登録があれば削除
      */
-    if (
-      rawAmount === "" &&
-      paymentDate === ""
-    ) {
+    if (rawAmount === "") {
       const existing =
         entryMap.get(item.id);
 
@@ -524,7 +526,9 @@ export default function FixedCostsPage() {
       }
 
       setMessage(
-        `${item.item_name}の${month}分を削除しました。`
+        existing
+          ? `${item.item_name}の${month}分を削除しました。`
+          : `「${item.item_name}」は金額が空のため登録していません。`
       );
 
       await loadAll();
