@@ -2042,35 +2042,14 @@ function BottomNav() {
         zIndex: 50,
       }}
     >
-      <Nav
-        href="/"
-        label="入力"
-      />
-
-      <Nav
-        href="/fixed-costs"
-        label="固定費"
-      />
-
-      <Nav
-        href="/summary"
-        label="集計"
-      />
-
-      <Nav
-        href="/graph"
-        label="グラフ"
-      />
-
-      <Nav
-        href="/calendar"
-        label="日別"
-      />
-
-      <Nav
-        href="/kids"
-        label="子供"
-      />
+      <Nav href="/" label="🏠" />
+      <Nav href="/fixed-costs" label="固定費" />
+      <Nav href="/summary" label="📊" />
+      <Nav href="/graph" label="📈" />
+      <Nav href="/calendar" label="📅" />
+      <Nav href="/dashboard" label="指標" />
+      <Nav href="/kids" label="👦" />
+      <Nav href="/memo" label="📝" />
     </div>
   );
 }
