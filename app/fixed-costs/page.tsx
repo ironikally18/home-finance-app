@@ -2037,7 +2037,7 @@ function BottomNav() {
           "1px solid #374151",
         display: "grid",
         gridTemplateColumns:
-          "repeat(6, 1fr)",
+          "repeat(8, 1fr)",
         padding: "4px 2px",
         zIndex: 50,
       }}
