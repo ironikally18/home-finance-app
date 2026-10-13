@@ -61,8 +61,8 @@ const DASHBOARD_GROUPS = {
   },
 
   entertainment: {
-    label: "娯楽",
-    majorCategories: ["娯楽"],
+    label: "その他",
+    majorCategories: ["その他"],
   },
 
   education: {

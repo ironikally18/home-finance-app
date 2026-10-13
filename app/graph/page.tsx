@@ -45,6 +45,12 @@ const COLORS = [
 
 const PAGE_SIZE = 1000;
 
+// direction の値（収入側の値がDBと違う場合はここだけ直す）
+const DIRECTION_EXPENSE = "expense";
+const DIRECTION_INCOME = "income";
+
+type Tab = "expense" | "income";
+
 // ---- 年月ヘルパー（"YYYY-MM" 形式） ----
 const pad2 = (n: number) => String(n).padStart(2, "0");
 
@@ -77,6 +83,7 @@ export default function GraphPage() {
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [rows, setRows] = useState<Row[]>([]);
+  const [tab, setTab] = useState<Tab>("expense");
   const [selectedCategory, setSelectedCategory] = useState("");
   const [message, setMessage] = useState("");
 
@@ -84,6 +91,10 @@ export default function GraphPage() {
   const [preset, setPreset] = useState<Preset>("12");
   const [startMonth, setStartMonth] = useState(() => addMonths(currentYm(), -11));
   const [endMonth, setEndMonth] = useState(() => currentYm());
+
+  const isIncome = tab === "income";
+  const label = isIncome ? "収入" : "支出";
+  const accent = isIncome ? "#34d399" : "#60a5fa";
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -100,7 +111,7 @@ export default function GraphPage() {
     if (user) void loadData();
   }, [user]);
 
-  // 1000件ずつ .range() で繰り返し、全件読み込む
+  // 1000件ずつ .range() で繰り返し、全件読み込む（支出・収入の両方）
   const loadData = async () => {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) return;
@@ -123,7 +134,7 @@ export default function GraphPage() {
           )
         `)
         .eq("user_id", session.user.id)
-        .eq("direction", "expense")
+        .in("direction", [DIRECTION_EXPENSE, DIRECTION_INCOME])
         // 同じ日付の行がページ境界で重複・欠落しないよう id でも並べる
         .order("txn_date", { ascending: true })
         .order("id", { ascending: true })
@@ -152,6 +163,20 @@ export default function GraphPage() {
     return category?.major_category || "未分類";
   };
 
+  // タブに応じた行だけを使う
+  const tabRows = useMemo(
+    () =>
+      rows.filter(
+        (r) => r.direction === (isIncome ? DIRECTION_INCOME : DIRECTION_EXPENSE)
+      ),
+    [rows, isIncome]
+  );
+
+  const changeTab = (next: Tab) => {
+    setTab(next);
+    setSelectedCategory("");
+  };
+
   // ---- 期間の操作 ----
   const applyPreset = (value: Preset) => {
     setPreset(value);
@@ -160,6 +185,7 @@ export default function GraphPage() {
     if (value === "custom") return;
 
     if (value === "all") {
+      // rows は日付順。支出・収入どちらかの最古の月から表示
       const first = rows.length > 0 ? rows[0].txn_date.slice(0, 7) : cur;
       setStartMonth(first);
       setEndMonth(cur);
@@ -194,11 +220,11 @@ export default function GraphPage() {
   // 期間内の行だけに絞る
   const rangeRows = useMemo(
     () =>
-      rows.filter((r) => {
+      tabRows.filter((r) => {
         const m = r.txn_date.slice(0, 7);
         return m >= rangeStart && m <= rangeEnd;
       }),
-    [rows, rangeStart, rangeEnd]
+    [tabRows, rangeStart, rangeEnd]
   );
 
   const { chartData, categoryNames } = useMemo(() => {
@@ -228,12 +254,31 @@ export default function GraphPage() {
     };
   }, [rangeRows, monthList]);
 
-  // 費目プルダウンの候補は、期間にかかわらず全データの費目から作る
+  // 月ごとの合計（折れ線用）
+  const totalData = useMemo(() => {
+    const map = new Map<string, number>();
+    monthList.forEach((month) => map.set(month, 0));
+    rangeRows.forEach((r) => {
+      const month = r.txn_date.slice(0, 7);
+      map.set(month, (map.get(month) || 0) + Number(r.amount || 0));
+    });
+    return Array.from(map.entries()).map(([month, amount]) => ({
+      month,
+      amount,
+    }));
+  }, [rangeRows, monthList]);
+
+  const grandTotal = useMemo(
+    () => totalData.reduce((sum, row) => sum + row.amount, 0),
+    [totalData]
+  );
+
+  // 費目プルダウンの候補は、期間にかかわらずタブ内の全データの費目から作る
   const allCategoryNames = useMemo(() => {
     const set = new Set<string>();
-    rows.forEach((r) => set.add(getCategoryName(r)));
+    tabRows.forEach((r) => set.add(getCategoryName(r)));
     return Array.from(set).sort((a, b) => a.localeCompare(b, "ja"));
-  }, [rows]);
+  }, [tabRows]);
 
   const selectedCategoryData = useMemo(() => {
     if (!selectedCategory) return [];
@@ -265,6 +310,8 @@ export default function GraphPage() {
     return <div style={{ minHeight: "100vh", background: "#111827", color: "#f9fafb", display: "flex", alignItems: "center", justifyContent: "center" }}>ログインしてください</div>;
   }
 
+  const chartWidth = Math.max(chartData.length * 80, 600);
+
   return (
     <div
       style={{
@@ -278,8 +325,18 @@ export default function GraphPage() {
       }}
     >
       <h1 style={{ fontSize: "24px", fontWeight: "bold" }}>
-        月別支出グラフ
+        月別{label}グラフ
       </h1>
+
+      {/* 支出 / 収入 タブ */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", margin: "12px 0" }}>
+        <TabButton active={tab === "expense"} color="#60a5fa" onClick={() => changeTab("expense")}>
+          支出
+        </TabButton>
+        <TabButton active={tab === "income"} color="#34d399" onClick={() => changeTab("income")}>
+          収入
+        </TabButton>
+      </div>
 
       <div
         style={{
@@ -347,12 +404,64 @@ export default function GraphPage() {
 
       {message && <div>{message}</div>}
 
-      <SectionTitle title="全体：費目別の月別支出" />
+      {/* 合計の推移 */}
+      <SectionTitle title={`${label}の月別合計`} />
+
+      <div
+        style={{
+          marginBottom: "8px",
+          color: "#d1d5db",
+          fontSize: "14px",
+        }}
+      >
+        表示期間合計: {grandTotal.toLocaleString()}円
+      </div>
 
       <div style={scrollWrapStyle}>
-        <div style={{ width: Math.max(chartData.length * 80, 600), height: 420 }}>
+        <LineChart
+          width={chartWidth}
+          height={320}
+          data={totalData}
+          margin={{ top: 8, right: 16, left: 8, bottom: 40 }}
+        >
+          <CartesianGrid stroke="#374151" />
+          <XAxis
+            dataKey="month"
+            stroke="#f9fafb"
+            tick={{ fontSize: 12 }}
+            angle={-40}
+            textAnchor="end"
+            interval={0}
+          />
+          <YAxis
+            stroke="#f9fafb"
+            tick={{ fontSize: 12 }}
+            tickFormatter={(v: number) =>
+              v >= 10000 ? `${(v / 10000).toFixed(0)}万` : String(v)
+            }
+          />
+          <Tooltip
+            contentStyle={{ background: "#1f2937", border: "1px solid #374151", color: "#f9fafb" }}
+            formatter={(value) => [`${Number(value).toLocaleString()}円`, `${label}合計`]}
+          />
+          <Line
+            type="monotone"
+            dataKey="amount"
+            name={`${label}合計`}
+            stroke={accent}
+            strokeWidth={3}
+            dot={{ r: 5 }}
+          />
+        </LineChart>
+      </div>
+
+      {/* 費目別の積み上げ */}
+      <SectionTitle title={`全体：費目別の月別${label}`} />
+
+      <div style={scrollWrapStyle}>
+        <div style={{ width: chartWidth, height: 420 }}>
           <BarChart
-            width={Math.max(chartData.length * 80, 600)}
+            width={chartWidth}
             height={420}
             data={chartData}
             margin={{ top: 8, right: 16, left: 8, bottom: 40 }}
@@ -386,7 +495,7 @@ export default function GraphPage() {
               <Bar
                 key={name}
                 dataKey={name}
-                stackId="expense"
+                stackId="total"
                 fill={COLORS[index % COLORS.length]}
               />
             ))}
@@ -394,6 +503,7 @@ export default function GraphPage() {
         </div>
       </div>
 
+      {/* 選択した費目の推移 */}
       {selectedCategory && (
         <>
           <SectionTitle title={`${selectedCategory} の月別推移`} />
@@ -441,7 +551,7 @@ export default function GraphPage() {
                   type="monotone"
                   dataKey="amount"
                   name={selectedCategory}
-                  stroke="#60a5fa"
+                  stroke={accent}
                   strokeWidth={3}
                   dot={{ r: 5 }}
                 />
@@ -453,6 +563,37 @@ export default function GraphPage() {
 
       <BottomNav />
     </div>
+  );
+}
+
+function TabButton({
+  active,
+  color,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  color: string;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        padding: "10px",
+        borderRadius: "8px",
+        border: `1px solid ${active ? color : "#374151"}`,
+        background: active ? color : "#1f2937",
+        color: active ? "#111827" : "#f9fafb",
+        fontWeight: "bold",
+        fontSize: "15px",
+        cursor: "pointer",
+      }}
+    >
+      {children}
+    </button>
   );
 }
 
