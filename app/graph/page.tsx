@@ -6,10 +6,12 @@ import type { User } from "@supabase/supabase-js";
 import {
   Bar,
   BarChart,
+  Cell,
   CartesianGrid,
   Legend,
   Line,
   LineChart,
+  ReferenceLine,
   Tooltip,
   XAxis,
   YAxis,
@@ -273,6 +275,37 @@ export default function GraphPage() {
     [totalData]
   );
 
+  // 月ごとの収入・支出・差額（タブに関係なく両方を集計）
+  const balanceData = useMemo(() => {
+    const map = new Map<string, { income: number; expense: number }>();
+    monthList.forEach((month) => map.set(month, { income: 0, expense: 0 }));
+
+    rows.forEach((r) => {
+      const entry = map.get(r.txn_date.slice(0, 7));
+      if (!entry) return;
+      const amount = Number(r.amount || 0);
+      if (r.direction === DIRECTION_INCOME) entry.income += amount;
+      else if (r.direction === DIRECTION_EXPENSE) entry.expense += amount;
+    });
+
+    return Array.from(map.entries()).map(([month, v]) => ({
+      month,
+      income: v.income,
+      expense: v.expense,
+      diff: v.income - v.expense,
+    }));
+  }, [rows, monthList]);
+
+  const incomeTotal = useMemo(
+    () => balanceData.reduce((sum, d) => sum + d.income, 0),
+    [balanceData]
+  );
+  const expenseTotal = useMemo(
+    () => balanceData.reduce((sum, d) => sum + d.expense, 0),
+    [balanceData]
+  );
+  const diffTotal = incomeTotal - expenseTotal;
+
   // 費目プルダウンの候補は、期間にかかわらずタブ内の全データの費目から作る
   const allCategoryNames = useMemo(() => {
     const set = new Set<string>();
@@ -404,6 +437,25 @@ export default function GraphPage() {
 
       {message && <div>{message}</div>}
 
+      {/* 表示期間の合計（収入・支出・差額） */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr 1fr",
+          gap: "8px",
+          marginBottom: "16px",
+        }}
+      >
+        <SummaryBox label="収入合計" value={incomeTotal} color="#34d399" />
+        <SummaryBox label="支出合計" value={expenseTotal} color="#60a5fa" />
+        <SummaryBox
+          label="差額合計（収入−支出）"
+          value={diffTotal}
+          color={diffTotal >= 0 ? "#34d399" : "#f87171"}
+          signed
+        />
+      </div>
+
       {/* 合計の推移 */}
       <SectionTitle title={`${label}の月別合計`} />
 
@@ -453,6 +505,55 @@ export default function GraphPage() {
             dot={{ r: 5 }}
           />
         </LineChart>
+      </div>
+
+      {/* 収入 − 支出 の差額 */}
+      <SectionTitle title="収入 − 支出 の月別差額" />
+
+      <div
+        style={{
+          marginBottom: "8px",
+          color: diffTotal >= 0 ? "#34d399" : "#f87171",
+          fontSize: "14px",
+        }}
+      >
+        表示期間の差額合計: {formatSigned(diffTotal)}
+      </div>
+
+      <div style={scrollWrapStyle}>
+        <BarChart
+          width={chartWidth}
+          height={320}
+          data={balanceData}
+          margin={{ top: 8, right: 16, left: 8, bottom: 40 }}
+        >
+          <CartesianGrid stroke="#374151" />
+          <XAxis
+            dataKey="month"
+            stroke="#f9fafb"
+            tick={{ fontSize: 12 }}
+            angle={-40}
+            textAnchor="end"
+            interval={0}
+          />
+          <YAxis
+            stroke="#f9fafb"
+            tick={{ fontSize: 12 }}
+            tickFormatter={(v: number) =>
+              Math.abs(v) >= 10000 ? `${(v / 10000).toFixed(0)}万` : String(v)
+            }
+          />
+          <Tooltip
+            contentStyle={{ background: "#1f2937", border: "1px solid #374151", color: "#f9fafb" }}
+            formatter={(value) => [formatSigned(Number(value)), "差額"]}
+          />
+          <ReferenceLine y={0} stroke="#9ca3af" />
+          <Bar dataKey="diff" name="差額">
+            {balanceData.map((d) => (
+              <Cell key={d.month} fill={d.diff >= 0 ? "#34d399" : "#f87171"} />
+            ))}
+          </Bar>
+        </BarChart>
       </div>
 
       {/* 費目別の積み上げ */}
@@ -562,6 +663,39 @@ export default function GraphPage() {
       )}
 
       <BottomNav />
+    </div>
+  );
+}
+
+const formatSigned = (n: number) =>
+  `${n > 0 ? "+" : ""}${n.toLocaleString()}円`;
+
+function SummaryBox({
+  label,
+  value,
+  color,
+  signed = false,
+}: {
+  label: string;
+  value: number;
+  color: string;
+  signed?: boolean;
+}) {
+  return (
+    <div
+      style={{
+        background: "#1f2937",
+        border: "1px solid #374151",
+        borderRadius: "12px",
+        padding: "10px",
+      }}
+    >
+      <div style={{ fontSize: "12px", color: "#d1d5db", marginBottom: "4px" }}>
+        {label}
+      </div>
+      <div style={{ fontSize: "16px", fontWeight: "bold", color }}>
+        {signed ? formatSigned(value) : `${value.toLocaleString()}円`}
+      </div>
     </div>
   );
 }
