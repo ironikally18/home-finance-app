@@ -52,6 +52,7 @@ const DIRECTION_EXPENSE = "expense";
 const DIRECTION_INCOME = "income";
 
 type Tab = "expense" | "income";
+type CategoryLevel = "major" | "minor";
 
 // ---- 年月ヘルパー（"YYYY-MM" 形式） ----
 const pad2 = (n: number) => String(n).padStart(2, "0");
@@ -87,6 +88,7 @@ export default function GraphPage() {
   const [rows, setRows] = useState<Row[]>([]);
   const [tab, setTab] = useState<Tab>("expense");
   const [selectedCategory, setSelectedCategory] = useState("");
+  const [categoryLevel, setCategoryLevel] = useState<CategoryLevel>("major");
   const [message, setMessage] = useState("");
 
   // 期間（初期値：今月を終了月とした直近12か月）
@@ -165,6 +167,15 @@ export default function GraphPage() {
     return category?.major_category || "未分類";
   };
 
+  // 推移グラフ用の分類キー（大分類 or 「大分類 › 中分類」）
+  const getCategoryKey = (r: Row, level: CategoryLevel) => {
+    if (level === "major") return getCategoryName(r);
+    const category = Array.isArray(r.categories)
+      ? r.categories[0]
+      : r.categories;
+    return `${getCategoryName(r)} › ${category?.minor_category || "(中分類なし)"}`;
+  };
+
   // タブに応じた行だけを使う
   const tabRows = useMemo(
     () =>
@@ -176,6 +187,11 @@ export default function GraphPage() {
 
   const changeTab = (next: Tab) => {
     setTab(next);
+    setSelectedCategory("");
+  };
+
+  const changeCategoryLevel = (next: CategoryLevel) => {
+    setCategoryLevel(next);
     setSelectedCategory("");
   };
 
@@ -309,9 +325,9 @@ export default function GraphPage() {
   // 費目プルダウンの候補は、期間にかかわらずタブ内の全データの費目から作る
   const allCategoryNames = useMemo(() => {
     const set = new Set<string>();
-    tabRows.forEach((r) => set.add(getCategoryName(r)));
+    tabRows.forEach((r) => set.add(getCategoryKey(r, categoryLevel)));
     return Array.from(set).sort((a, b) => a.localeCompare(b, "ja"));
-  }, [tabRows]);
+  }, [tabRows, categoryLevel]);
 
   const selectedCategoryData = useMemo(() => {
     if (!selectedCategory) return [];
@@ -320,7 +336,7 @@ export default function GraphPage() {
     monthList.forEach((month) => map.set(month, 0));
 
     rangeRows.forEach((r) => {
-      if (getCategoryName(r) !== selectedCategory) return;
+      if (getCategoryKey(r, categoryLevel) !== selectedCategory) return;
       const month = r.txn_date.slice(0, 7);
       map.set(month, (map.get(month) || 0) + Number(r.amount || 0));
     });
@@ -329,7 +345,7 @@ export default function GraphPage() {
       month,
       amount,
     }));
-  }, [rangeRows, monthList, selectedCategory]);
+  }, [rangeRows, monthList, selectedCategory, categoryLevel]);
 
   const selectedCategoryTotal = useMemo(() => {
     return selectedCategoryData.reduce((sum, row) => sum + row.amount, 0);
@@ -420,6 +436,14 @@ export default function GraphPage() {
 
         <div>
           <div style={{ marginBottom: "4px" }}>費目を選んで推移を見る</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", marginBottom: "8px" }}>
+            <TabButton active={categoryLevel === "major"} color="#a78bfa" onClick={() => changeCategoryLevel("major")}>
+              大分類
+            </TabButton>
+            <TabButton active={categoryLevel === "minor"} color="#a78bfa" onClick={() => changeCategoryLevel("minor")}>
+              中分類
+            </TabButton>
+          </div>
           <select
             value={selectedCategory}
             onChange={(e) => setSelectedCategory(e.target.value)}
