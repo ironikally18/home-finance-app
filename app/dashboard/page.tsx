@@ -5,7 +5,7 @@ import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import type { User } from "@supabase/supabase-js";
 
-type CostClass = "fixed" | "semi" | "variable" | "exclude";
+type CostClass = "fixed" | "semi" | "variable" | "special" | "exclude";
 
 type Txn = {
   id: string;
@@ -35,6 +35,11 @@ const DASHBOARD_GROUPS = {
     majorCategories: ["飲食費"],
   },
 
+  housing: {
+    label: "住居費",
+    majorCategories: ["住居費"],
+  },
+
   utilities: {
     label: "水道光熱費",
     majorCategories: ["水道光熱費"],
@@ -50,6 +55,11 @@ const DASHBOARD_GROUPS = {
     majorCategories: ["日用品"],
   },
 
+  clothing: {
+    label: "衣類",
+    majorCategories: ["衣類"],
+  },
+
   medical: {
     label: "医療費",
     majorCategories: ["医療"],
@@ -61,13 +71,24 @@ const DASHBOARD_GROUPS = {
   },
 
   entertainment: {
-    label: "その他",
-    majorCategories: ["その他"],
+    label: "趣味・娯楽",
+    majorCategories: ["趣味・娯楽"],
+  },
+
+  gadget: {
+    label: "家電・ガジェット",
+    majorCategories: ["家電・ガジェット"],
+  },
+
+  subscription: {
+    label: "サブスク・ソフト",
+    majorCategories: ["サブスク・ソフト"],
   },
 
   education: {
-    label: "教育・学び",
-    majorCategories: ["果恩"],
+    label: "教育・子ども",
+    // 「果恩」は旧マスタの大分類名（過去データ用に残している）
+    majorCategories: ["教育", "子ども", "果恩"],
   },
 
   car: {
@@ -84,13 +105,21 @@ const DASHBOARD_GROUPS = {
     label: "保険",
     majorCategories: ["保険"],
   },
+
+  tax: {
+    label: "税・寄附",
+    majorCategories: ["税・寄附"],
+  },
+
+  other: {
+    label: "その他",
+    majorCategories: ["その他"],
+  },
 };
 
-const FIXED_GROUP_KEYS = [
-  "utilities",
-  "communication",
-  "insurance",
-];
+// 実費の家賃として扱う費目（この費目がある月は、仮想家賃を加算しない）
+const RENT_MAJOR = "住居費";
+const RENT_MINOR = "家賃";
 
 function yen(n: number) {
   return `${Math.round(n).toLocaleString()}円`;
@@ -100,6 +129,7 @@ function costKindLabel(value: string | null | undefined) {
   if (value === "fixed") return "固定費";
   if (value === "semi") return "準固定費";
   if (value === "variable") return "変動費";
+  if (value === "special") return "特別費";
   if (value === "exclude") return "対象外";
   return "未設定";
 }
@@ -129,6 +159,14 @@ function majorCategory(x: Txn) {
   const cat = Array.isArray(raw) ? raw[0] : raw;
 
   return cat?.major_category?.trim() ?? "";
+}
+
+function minorCategory(x: Txn) {
+  const raw = x.categories;
+
+  const cat = Array.isArray(raw) ? raw[0] : raw;
+
+  return cat?.minor_category?.trim() ?? "";
 }
 
 function thisMonth() {
@@ -283,16 +321,25 @@ export default function DashboardPage() {
 
     const foodExpense = groupTotals.food ?? 0;
 
-    const fixedExpense = FIXED_GROUP_KEYS.reduce(
-      (sum, key) => sum + (groupTotals[key] ?? 0),
-      0
-    );
+    // 固定費は、費目マスタの区分が「固定費」の費目の合計（下の classifiedTotals）
 
     const engel = expense > 0 ? (foodExpense / expense) * 100 : 0;
-    const fixedRate = income > 0 ? (fixedExpense / income) * 100 : 0;
     const savingRate = income > 0 ? (balance / income) * 100 : 0;
 
-    const simulatedExpense = expense + virtualRent;
+    // 実費の家賃（住居費 / 家賃）
+    const actualRent = items
+      .filter(
+        (x) =>
+          x.direction === "expense" &&
+          majorCategory(x) === RENT_MAJOR &&
+          minorCategory(x) === RENT_MINOR
+      )
+      .reduce((s, x) => s + Number(x.amount || 0), 0);
+
+    // 実費の家賃がある月は仮想家賃を加算しない
+    const effectiveVirtualRent = actualRent > 0 ? 0 : virtualRent;
+
+    const simulatedExpense = expense + effectiveVirtualRent;
     const simulatedBalance = income - simulatedExpense;
 
     const simulatedEngel =
@@ -311,18 +358,29 @@ export default function DashboardPage() {
           if (cls === "fixed") acc.fixed += amount;
           if (cls === "semi") acc.semi += amount;
           if (cls === "variable") acc.variable += amount;
+          if (cls === "special") acc.special += amount;
 
           return acc;
         },
-        { fixed: 0, semi: 0, variable: 0 }
+        { fixed: 0, semi: 0, variable: 0, special: 0 }
       );
 
     const fixedExpenseByClass = classifiedTotals.fixed;
     const semiFixedExpense = classifiedTotals.semi;
     const variableExpense = classifiedTotals.variable;
+    const specialExpense = classifiedTotals.special;
+
+    // 経常支出＝特別費（年払い・単発）を除いた支出
+    const recurringExpense =
+      fixedExpenseByClass + semiFixedExpense + variableExpense;
+    const recurringBalance = income - recurringExpense;
+    const simulatedRecurringBalance = recurringBalance - effectiveVirtualRent;
 
     const fixedRateByClass =
       income > 0 ? (fixedExpenseByClass / income) * 100 : 0;
+
+    const specialRate =
+      income > 0 ? (specialExpense / income) * 100 : 0;
 
     const semiFixedRate =
       income > 0 ? (semiFixedExpense / income) * 100 : 0;
@@ -340,10 +398,15 @@ export default function DashboardPage() {
       expense,
       balance,
       foodExpense,
-      fixedExpense,
       engel,
-      fixedRate,
       savingRate,
+      actualRent,
+      effectiveVirtualRent,
+      specialExpense,
+      specialRate,
+      recurringExpense,
+      recurringBalance,
+      simulatedRecurringBalance,
       groupTotals,
       simulatedExpense,
       simulatedBalance,
@@ -357,7 +420,7 @@ export default function DashboardPage() {
       variableRate,
       livingCostRate,
     };
-  }, [items]);
+  }, [items, virtualRent]);
 
   async function copyAiReport() {
     const report = `
@@ -373,7 +436,9 @@ ${month}
 貯蓄率: ${pct(summary.savingRate)}
 
 【仮想家賃込み】
-仮想家賃: ${yen(virtualRent)}
+仮想家賃: ${yen(summary.effectiveVirtualRent)}${
+      summary.actualRent > 0 ? "（実費の家賃があるため加算なし）" : ""
+    }
 仮想家賃込み支出: ${yen(summary.simulatedExpense)}
 補正後収支: ${yen(summary.simulatedBalance)}
 補正貯蓄率: ${pct(summary.simulatedSavingRate)}
@@ -384,6 +449,10 @@ ${month}
 固定費: ${yen(summary.fixedExpenseByClass)}
 準固定費: ${yen(summary.semiFixedExpense)}
 変動費: ${yen(summary.variableExpense)}
+特別費: ${yen(summary.specialExpense)}
+経常支出（特別費を除く）: ${yen(summary.recurringExpense)}
+経常収支（特別費を除く）: ${yen(summary.recurringBalance)}
+仮想家賃込みの経常収支: ${yen(summary.simulatedRecurringBalance)}
 生活維持費率: ${pct(summary.livingCostRate)}
 
 【お願いしたい分析】
@@ -403,7 +472,11 @@ ${month}
     summary.engel <= 25 ? "good" : summary.engel <= 35 ? "warn" : "bad";
 
   const fixedTone =
-    summary.fixedRate <= 35 ? "good" : summary.fixedRate <= 50 ? "warn" : "bad";
+    summary.fixedRateByClass <= 35
+      ? "good"
+      : summary.fixedRateByClass <= 50
+        ? "warn"
+        : "bad";
 
   const savingTone =
     summary.savingRate >= 20 ? "good" : summary.savingRate >= 0 ? "warn" : "bad";
@@ -465,6 +538,11 @@ ${month}
             <p className="mt-1 text-xs text-gray-600">
               実際には払っていない家賃を入れて、社宅解除後の生活コストを試算します。
             </p>
+            <p className="mt-1 text-xs text-gray-600">
+              {summary.actualRent > 0
+                ? `この月は実費の家賃（${yen(summary.actualRent)}）があるため、仮想家賃は加算しません。`
+                : "この月は実費の家賃がないため、仮想家賃を加算して試算します。"}
+            </p>
           </div>
         </div>
 
@@ -508,6 +586,26 @@ ${month}
               />
 
               <Card
+                title="特別費"
+                value={yen(summary.specialExpense)}
+                note={`年払い・単発など / 収入比 ${pct(summary.specialRate)}`}
+              />
+
+              <Card
+                title="経常収支"
+                value={yen(summary.recurringBalance)}
+                note="収入 − (固定費 + 準固定費 + 変動費)。特別費を除く"
+                tone={summary.recurringBalance >= 0 ? "good" : "bad"}
+              />
+
+              <Card
+                title="仮想家賃込みの経常収支"
+                value={yen(summary.simulatedRecurringBalance)}
+                note="経常収支 − 仮想家賃。特別費を除く"
+                tone={summary.simulatedRecurringBalance >= 0 ? "good" : "bad"}
+              />
+
+              <Card
                 title="生活維持費率"
                 value={pct(summary.livingCostRate)}
                 note="固定費 + 準固定費 ÷ 収入"
@@ -524,8 +622,8 @@ ${month}
 
               <Card
                 title="固定費率"
-                value={pct(summary.fixedRate)}
-                note={`固定費 ${yen(summary.fixedExpense)} ÷ 収入 ${yen(
+                value={pct(summary.fixedRateByClass)}
+                note={`固定費 ${yen(summary.fixedExpenseByClass)} ÷ 収入 ${yen(
                   summary.income
                 )}`}
                 tone={fixedTone}
@@ -542,7 +640,7 @@ ${month}
               <Card
                 title="仮想家賃込み支出"
                 value={yen(summary.simulatedExpense)}
-                note={`実支出 ${yen(summary.expense)} + 仮想家賃 ${yen(virtualRent)}`}
+                note={`実支出 ${yen(summary.expense)} + 仮想家賃 ${yen(summary.effectiveVirtualRent)}`}
               />
 
               <Card
@@ -627,21 +725,11 @@ ${month}
               </div>
 
               <div className="mt-4">
-                <div className="text-sm font-bold">固定費扱い</div>
-                <div className="mt-1 flex flex-wrap gap-2">
-                  {FIXED_GROUP_KEYS.map((key) =>
-                    DASHBOARD_GROUPS[
-                      key as keyof typeof DASHBOARD_GROUPS
-                    ].majorCategories.map((c) => (
-                      <span
-                        key={c}
-                        className="rounded-full bg-gray-100 px-3 py-1 text-sm text-gray-700"
-                      >
-                        {c}
-                      </span>
-                    ))
-                  )}
-                </div>
+                <div className="text-sm font-bold">固定費・準固定費・変動費・特別費</div>
+                <p className="mt-1 text-sm text-gray-600">
+                  費目マスタの「区分」で集計しています。費目の区分は、
+                  管理項目の画面で変更できます。
+                </p>
               </div>
             </section>
           </>

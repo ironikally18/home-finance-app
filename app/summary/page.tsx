@@ -13,8 +13,8 @@ type Row = {
   amount: number;
   direction: string;
   categories:
-  | { major_category: string; minor_category: string }
-  | { major_category: string; minor_category: string }[]
+  | { major_category: string; minor_category: string; category_kind: string | null }
+  | { major_category: string; minor_category: string; category_kind: string | null }[]
   | null;
 };
 
@@ -84,7 +84,8 @@ export default function SummaryPage() {
         direction,
         categories:category_id (
           major_category,
-          minor_category
+          minor_category,
+          category_kind
         )
       `)
       .eq("user_id", session.user.id)
@@ -104,6 +105,7 @@ export default function SummaryPage() {
     let income = 0;
     let expense = 0;
     const categoryMap = new Map<string, number>();
+    const kindTotals = { fixed: 0, semi: 0, variable: 0, special: 0 };
 
     rows.forEach((r) => {
       const amount = Number(r.amount || 0);
@@ -125,6 +127,13 @@ export default function SummaryPage() {
           : "未分類";
 
         categoryMap.set(name, (categoryMap.get(name) || 0) + amount);
+
+        // 区分別（固定費・準固定費・変動費・特別費）。区分未設定は変動費として数える
+        const kind = cat?.category_kind;
+        if (kind === "fixed") kindTotals.fixed += amount;
+        else if (kind === "semi") kindTotals.semi += amount;
+        else if (kind === "special") kindTotals.special += amount;
+        else kindTotals.variable += amount;
         return;
       }
 
@@ -139,6 +148,7 @@ export default function SummaryPage() {
       income,
       expense,
       balance: income - expense,
+      kindTotals,
       categories,
     };
   }, [rows]);
@@ -193,6 +203,22 @@ export default function SummaryPage() {
         <Box title="収入" value={summary.income} />
         <Box title="支出" value={summary.expense} />
         <Box title="差額" value={summary.balance} />
+      </div>
+
+      <h2 style={{ fontSize: "18px", marginTop: "20px" }}>区分別支出</h2>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(2, 1fr)",
+          gap: "8px",
+          marginBottom: "16px",
+        }}
+      >
+        <Box title="固定費" value={summary.kindTotals.fixed} />
+        <Box title="準固定費" value={summary.kindTotals.semi} />
+        <Box title="変動費" value={summary.kindTotals.variable} />
+        <Box title="特別費（年払い・単発）" value={summary.kindTotals.special} />
       </div>
 
       <h2 style={{ fontSize: "18px", marginTop: "20px" }}>費目別支出</h2>

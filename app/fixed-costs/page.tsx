@@ -41,6 +41,8 @@ type FixedCostItem = {
   payment_day: number | null;
   display_order: number;
   is_active: boolean;
+  start_month: string | null; // 適用開始月（YYYY-MM-01）。空なら最初から
+  end_month: string | null; // 適用終了月（YYYY-MM-01）。空なら継続中
 };
 
 type FixedCostEntry = {
@@ -169,6 +171,12 @@ export default function FixedCostsPage() {
   const [editPaymentDay, setEditPaymentDay] =
     useState("");
 
+  const [editStartMonth, setEditStartMonth] =
+    useState("");
+
+  const [editEndMonth, setEditEndMonth] =
+    useState("");
+
   const [newItemName, setNewItemName] =
     useState("");
 
@@ -228,7 +236,7 @@ export default function FixedCostsPage() {
       supabase
         .from("fixed_cost_items")
         .select(
-          "id,item_name,wallet_id,account_id,category_id,merchant_name,payment_day,display_order,is_active"
+          "id,item_name,wallet_id,account_id,category_id,merchant_name,payment_day,display_order,is_active,start_month,end_month"
         )
         .eq("user_id", user.id)
         .eq("is_active", true)
@@ -293,9 +301,19 @@ export default function FixedCostsPage() {
       return;
     }
 
-    const loadedItems =
-      (itemsResult.data as FixedCostItem[]) ||
-      [];
+    /*
+     * 適用期間（開始月〜終了月）に表示月が入る項目だけを表示する。
+     * 終了した項目も、過去の月では引き続き表示される。
+     */
+    const loadedItems = (
+      (itemsResult.data as FixedCostItem[]) || []
+    ).filter(
+      (item) =>
+        (!item.start_month ||
+          item.start_month.slice(0, 7) <= month) &&
+        (!item.end_month ||
+          item.end_month.slice(0, 7) >= month)
+    );
 
     const loadedEntries =
       (entriesResult.data as FixedCostEntry[]) ||
@@ -871,6 +889,9 @@ export default function FixedCostsPage() {
         display_order:
           maxOrder + 1,
 
+        start_month:
+          month + "-01",
+
         is_active:
           true,
       });
@@ -886,7 +907,7 @@ export default function FixedCostsPage() {
     setNewItemName("");
 
     setMessage(
-      `${name}を追加しました。`
+      `${name}を追加しました。（適用開始月：${month}）`
     );
 
     await loadAll();
@@ -927,6 +948,18 @@ export default function FixedCostsPage() {
         ? String(
             item.payment_day
           )
+        : ""
+    );
+
+    setEditStartMonth(
+      item.start_month
+        ? item.start_month.slice(0, 7)
+        : ""
+    );
+
+    setEditEndMonth(
+      item.end_month
+        ? item.end_month.slice(0, 7)
         : ""
     );
   };
@@ -987,6 +1020,17 @@ export default function FixedCostsPage() {
         paymentDay = n;
       }
 
+      if (
+        editStartMonth &&
+        editEndMonth &&
+        editStartMonth > editEndMonth
+      ) {
+        setMessage(
+          "適用開始月は適用終了月以前にしてください。"
+        );
+        return;
+      }
+
       const {
         error,
       } = await supabase
@@ -1015,6 +1059,16 @@ export default function FixedCostsPage() {
 
           payment_day:
             paymentDay,
+
+          start_month:
+            editStartMonth
+              ? editStartMonth + "-01"
+              : null,
+
+          end_month:
+            editEndMonth
+              ? editEndMonth + "-01"
+              : null,
 
           updated_at:
             new Date().toISOString(),
@@ -1197,6 +1251,53 @@ export default function FixedCostsPage() {
   /*
    * 月変更
    */
+  /*
+   * 表示中の月までで終了する
+   * （end_monthに表示中の月を入れる。翌月以降は一覧に出ない）
+   * 過去の月の記録・家計簿データは残る
+   */
+  const endItemAtMonth = async (
+    item: FixedCostItem
+  ) => {
+    if (!user) return;
+
+    const [y, m] = month.split("-").map(Number);
+    const next = new Date(y, m, 1);
+    const nextLabel = `${next.getFullYear()}-${String(
+      next.getMonth() + 1
+    ).padStart(2, "0")}`;
+
+    if (
+      !window.confirm(
+        `「${item.item_name}」を${month}までで終了しますか？\n\n${nextLabel}以降の固定費一覧には表示されなくなります。過去の月の記録は残ります。`
+      )
+    ) {
+      return;
+    }
+
+    const { error } = await supabase
+      .from("fixed_cost_items")
+      .update({
+        end_month: month + "-01",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", item.id)
+      .eq("user_id", user.id);
+
+    if (error) {
+      setMessage(
+        "固定費の終了エラー: " + error.message
+      );
+      return;
+    }
+
+    setMessage(
+      `${item.item_name}を${month}までで終了しました。`
+    );
+
+    await loadAll();
+  };
+
   const changeMonth = (
     offset: number
   ) => {
@@ -1454,6 +1555,24 @@ export default function FixedCostsPage() {
                             )
                           }
                         </div>
+
+                  {(item.start_month ||
+                    item.end_month) && (
+                    <div
+                      style={
+                        smallTextStyle
+                      }
+                    >
+                      適用期間：
+                      {item.start_month
+                        ? item.start_month.slice(0, 7)
+                        : "最初"}
+                      〜
+                      {item.end_month
+                        ? item.end_month.slice(0, 7)
+                        : "継続中"}
+                    </div>
+                  )}
                       </div>
 
                       {amount ===
@@ -1631,6 +1750,20 @@ export default function FixedCostsPage() {
                       </button>
 
                       <button
+                    type="button"
+                    onClick={() =>
+                      endItemAtMonth(
+                        item
+                      )
+                    }
+                    style={
+                      secondaryButtonStyle
+                    }
+                  >
+                    この月で終了
+                  </button>
+
+                  <button
                         type="button"
                         onClick={() =>
                           deleteItem(
@@ -1732,6 +1865,69 @@ export default function FixedCostsPage() {
                     >
                       ※ここは各月の初期値です。
                       実際の支払日は毎月変更できます。
+                    </div>
+
+                    <label
+                      style={
+                        labelStyle
+                      }
+                    >
+                      適用開始月
+                    </label>
+
+                    <input
+                      type="month"
+                      value={
+                        editStartMonth
+                      }
+                      onChange={(
+                        e
+                      ) =>
+                        setEditStartMonth(
+                          e.target
+                            .value
+                        )
+                      }
+                      style={
+                        textInputStyle
+                      }
+                    />
+
+                    <label
+                      style={
+                        labelStyle
+                      }
+                    >
+                      適用終了月
+                    </label>
+
+                    <input
+                      type="month"
+                      value={
+                        editEndMonth
+                      }
+                      onChange={(
+                        e
+                      ) =>
+                        setEditEndMonth(
+                          e.target
+                            .value
+                        )
+                      }
+                      style={
+                        textInputStyle
+                      }
+                    />
+
+                    <div
+                      style={
+                        smallTextStyle
+                      }
+                    >
+                      ※開始月が空欄なら最初から、
+                      終了月が空欄なら継続中として扱います。
+                      会社の変更などは、旧項目に終了月を入れて、
+                      新しい項目を追加してください。
                     </div>
 
                     <label

@@ -130,6 +130,163 @@ function downloadCsv(filename: string, rows: CsvCell[][]) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+// ===== CSV取込 補助関数 START =====
+function decodeCsvBuffer(buf: ArrayBuffer): string {
+  try {
+    return new TextDecoder("utf-8", { fatal: true })
+      .decode(buf)
+      .replace(/^\uFEFF/, "");
+  } catch {
+    // ExcelのCSV（コンマ区切り）は、Shift_JISで保存されることが多い
+    return new TextDecoder("shift_jis").decode(buf);
+  }
+}
+
+function parseCsv(text: string): string[][] {
+  const firstLine = text.split(/\r\n|\n|\r/, 1)[0] ?? "";
+  const delimiter =
+    (firstLine.match(/\t/g) || []).length > (firstLine.match(/,/g) || []).length
+      ? "\t"
+      : ",";
+
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') {
+          cell += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        cell += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === delimiter) {
+      row.push(cell);
+      cell = "";
+    } else if (ch === "\r" || ch === "\n") {
+      if (ch === "\r" && text[i + 1] === "\n") i++;
+      row.push(cell);
+      cell = "";
+      rows.push(row);
+      row = [];
+    } else {
+      cell += ch;
+    }
+  }
+
+  if (cell !== "" || row.length > 0) {
+    row.push(cell);
+    rows.push(row);
+  }
+
+  return rows.filter((r) => r.some((c) => c.trim() !== ""));
+}
+
+function normText(v: string | null | undefined) {
+  return (v ?? "").normalize("NFKC").trim();
+}
+
+// 出力時に付けた数式防止の ' を取り除く（文字列の取込用）
+function cleanImportText(v: string | null | undefined) {
+  const t = (v ?? "").trim();
+  return t.replace(/^'(?=[=+\-@\t\r])/, "");
+}
+
+function parseImportDate(raw: string): string | null {
+  const m = normText(raw).match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})$/);
+  if (!m) return null;
+
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  const dt = new Date(y, mo - 1, d);
+
+  if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) {
+    return null;
+  }
+
+  return `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+
+function parseImportAmount(raw: string): number | null {
+  const s = normText(raw).replace(/[,円¥\s]/g, "");
+  if (!/^\d+(\.\d+)?$/.test(s)) return null;
+
+  const n = Number(s);
+  if (!Number.isInteger(n) || n <= 0) return null;
+
+  return n;
+}
+
+function parseImportDirection(
+  raw: string
+): "expense" | "income" | "transfer" | null {
+  const s = normText(raw).toLowerCase();
+
+  if (s === "" || s === "支出" || s === "expense") return "expense";
+  if (s === "収入" || s === "income") return "income";
+  if (s === "資金移動" || s === "振替" || s === "transfer") return "transfer";
+
+  return null;
+}
+
+function importKey(r: {
+  date: string;
+  direction: string;
+  amount: number;
+  walletId: string | null;
+  categoryId: string | null;
+  merchant: string | null;
+  memo: string | null;
+}) {
+  return [
+    r.date,
+    r.direction,
+    r.amount,
+    r.walletId ?? "",
+    r.categoryId ?? "",
+    r.merchant ?? "",
+    r.memo ?? "",
+  ].join("|");
+}
+
+type ImportRow = {
+  lineNo: number;
+  date: string;
+  direction: "expense" | "income" | "transfer";
+  amount: number;
+  walletId: string;
+  categoryId: string | null;
+  categoryLabel: string;
+  accountId: string | null;
+  merchant: string | null;
+  memo: string | null;
+};
+
+type ImportPreview = {
+  fileName: string;
+  total: number;
+  toInsert: ImportRow[];
+  duplicates: number;
+  errors: string[];
+  errorCount: number;
+  warnings: string[];
+  existingInRange: number;
+  minDate: string;
+  maxDate: string;
+};
+// ===== CSV取込 補助関数 END =====
+
 export default function Page() {
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -187,6 +344,12 @@ export default function Page() {
   const [csvTo, setCsvTo] = useState(() => toLocalDateString(new Date()));
   const [csvExporting, setCsvExporting] = useState(false);
   const [csvMessage, setCsvMessage] = useState("");
+
+  const [importWalletId, setImportWalletId] = useState("");
+  const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
+  const [importBusy, setImportBusy] = useState(false);
+  const [importMessage, setImportMessage] = useState("");
+  const [importFileKey, setImportFileKey] = useState(0);
 
   const [walletId, setWalletId] = useState("");
   const [date, setDate] = useState("");
@@ -1097,6 +1260,346 @@ export default function Page() {
     setMasterMessage(`${categories.length}件の費目をCSV出力しました`);
   };
 
+  // 財布の指定がない行に使う財布
+  const importDefaultWalletId =
+    importWalletId ||
+    wallets.find((w) => w.wallet_type === "household")?.id ||
+    wallets[0]?.id ||
+    "";
+
+  const previewImportCsv = async (file: File) => {
+    setImportMessage("");
+    setImportPreview(null);
+
+    if (!user) {
+      setImportMessage("ログインしてください");
+      return;
+    }
+
+    setImportBusy(true);
+
+    try {
+      const table = parseCsv(decodeCsvBuffer(await file.arrayBuffer()));
+
+      if (table.length < 2) {
+        setImportMessage("データ行がありません。見出し行とデータ行が必要です");
+        return;
+      }
+
+      const header = table[0].map((h) => normText(h).replace(/^\uFEFF/, ""));
+      const col = (name: string) => header.indexOf(name);
+
+      const iDate = col("日付");
+      const iAmount = col("金額");
+      const iDirection = col("区分");
+      const iWallet = col("財布");
+      const iMajor = col("大分類");
+      const iMinor = col("中分類");
+      const iCategory = col("費目");
+      const iAccount = col("支払元");
+      const iMerchant = col("支払先");
+      const iMemo = col("メモ");
+
+      if (iDate < 0 || iAmount < 0) {
+        setImportMessage("見出し行に「日付」と「金額」の列が必要です");
+        return;
+      }
+
+      const cell = (r: string[], i: number) => (i >= 0 ? r[i] ?? "" : "");
+
+      const errors: string[] = [];
+      let errorCount = 0;
+      const addError = (lineNo: number, msg: string) => {
+        errorCount++;
+        if (errors.length < 30) errors.push(`${lineNo}行目: ${msg}`);
+      };
+
+      const unknownAccounts = new Set<string>();
+      const parsed: ImportRow[] = [];
+
+      for (let i = 1; i < table.length; i++) {
+        const r = table[i];
+        const lineNo = i + 1;
+
+        const date = parseImportDate(cell(r, iDate));
+        if (!date) {
+          addError(lineNo, `日付が読めません（${cell(r, iDate)}）`);
+          continue;
+        }
+
+        const amount = parseImportAmount(cell(r, iAmount));
+        if (amount === null) {
+          addError(lineNo, `金額は1以上の整数で入力してください（${cell(r, iAmount)}）`);
+          continue;
+        }
+
+        const direction = parseImportDirection(cell(r, iDirection));
+        if (!direction) {
+          addError(lineNo, `区分は「支出」「収入」「資金移動」のいずれかにしてください（${cell(r, iDirection)}）`);
+          continue;
+        }
+
+        const walletRaw = normText(cell(r, iWallet));
+        const wallet = walletRaw
+          ? wallets.find((w) => normText(w.wallet_name) === walletRaw) ??
+            wallets.find((w) => w.wallet_type === walletRaw)
+          : wallets.find((w) => w.id === importDefaultWalletId);
+
+        if (!wallet) {
+          addError(lineNo, `財布が見つかりません（${walletRaw || "指定なし"}）`);
+          continue;
+        }
+
+        // 費目：「大分類」「中分類」の列、または「大 / 中」形式の「費目」列
+        let major = normText(cell(r, iMajor));
+        let minor = normText(cell(r, iMinor));
+
+        if (!major && !minor && iCategory >= 0) {
+          const parts = normText(cell(r, iCategory))
+            .split("/")
+            .map((p) => p.trim());
+          major = parts[0] ?? "";
+          minor = parts[1] ?? "";
+        }
+
+        let categoryId: string | null = null;
+        let categoryLabel = "（費目なし）";
+
+        if (major || minor) {
+          const walletType = wallet.wallet_type || "household";
+          const cat = categories.find(
+            (c) =>
+              normText(c.major_category) === major &&
+              normText(c.minor_category) === minor &&
+              (c.wallet_type === walletType || c.wallet_type === null)
+          );
+
+          if (!cat) {
+            addError(lineNo, `費目が未登録です（${major} / ${minor}）`);
+            continue;
+          }
+
+          categoryId = cat.id;
+          categoryLabel = `${cat.major_category} / ${cat.minor_category}`;
+        }
+
+        const accountName = normText(cell(r, iAccount));
+        let accountId: string | null = null;
+
+        if (accountName) {
+          const acc =
+            accounts.find(
+              (a) =>
+                a.wallet_id === wallet.id &&
+                normText(a.account_name) === accountName
+            ) ?? accounts.find((a) => normText(a.account_name) === accountName);
+
+          if (acc) accountId = acc.id;
+          else unknownAccounts.add(accountName);
+        }
+
+        parsed.push({
+          lineNo,
+          date,
+          direction,
+          amount,
+          walletId: wallet.id,
+          categoryId,
+          categoryLabel,
+          accountId,
+          merchant: cleanImportText(cell(r, iMerchant)) || null,
+          memo: cleanImportText(cell(r, iMemo)) || null,
+        });
+      }
+
+      const warnings: string[] = [];
+
+      if (unknownAccounts.size > 0) {
+        warnings.push(
+          `未登録の支払元は空欄で取り込みます: ${Array.from(unknownAccounts).slice(0, 10).join("、")}${unknownAccounts.size > 10 ? " ほか" : ""}`
+        );
+      }
+
+      const noCategory = parsed.filter((p) => !p.categoryId).length;
+      if (noCategory > 0) warnings.push(`費目が空欄の行が${noCategory}件あります`);
+
+      if (parsed.length === 0) {
+        setImportPreview({
+          fileName: file.name,
+          total: table.length - 1,
+          toInsert: [],
+          duplicates: 0,
+          errors,
+          errorCount,
+          warnings,
+          existingInRange: 0,
+          minDate: "",
+          maxDate: "",
+        });
+        return;
+      }
+
+      // 既存の明細と照合して、同じ行は重複としてスキップする（同じCSVを再度読み込んでも二重に入らない）
+      const dates = parsed.map((p) => p.date).sort();
+      const minDate = dates[0];
+      const maxDate = dates[dates.length - 1];
+
+      const existingCount = new Map<string, number>();
+      let existingInRange = 0;
+      const pageSize = 1000;
+
+      for (let offset = 0; ; offset += pageSize) {
+        const { data, error } = await supabase
+          .from("transaction_records")
+          .select("txn_date, amount, direction, wallet_id, category_id, merchant_name, description")
+          .eq("user_id", user.id)
+          .gte("txn_date", minDate)
+          .lte("txn_date", maxDate)
+          .order("txn_date", { ascending: true })
+          .order("id", { ascending: true })
+          .range(offset, offset + pageSize - 1);
+
+        if (error) {
+          setImportMessage("既存データの確認エラー: " + error.message);
+          return;
+        }
+
+        const rows =
+          (data as unknown as {
+            txn_date: string;
+            amount: number;
+            direction: string;
+            wallet_id: string | null;
+            category_id: string | null;
+            merchant_name: string | null;
+            description: string | null;
+          }[]) || [];
+
+        rows.forEach((x) => {
+          const k = importKey({
+            date: x.txn_date,
+            direction: x.direction,
+            amount: Number(x.amount),
+            walletId: x.wallet_id,
+            categoryId: x.category_id,
+            merchant: x.merchant_name,
+            memo: x.description,
+          });
+          existingCount.set(k, (existingCount.get(k) ?? 0) + 1);
+        });
+
+        existingInRange += rows.length;
+
+        if (rows.length < pageSize) break;
+      }
+
+      const toInsert: ImportRow[] = [];
+      let duplicates = 0;
+
+      parsed.forEach((p) => {
+        const k = importKey(p);
+        const left = existingCount.get(k) ?? 0;
+
+        if (left > 0) {
+          existingCount.set(k, left - 1);
+          duplicates++;
+        } else {
+          toInsert.push(p);
+        }
+      });
+
+      setImportPreview({
+        fileName: file.name,
+        total: table.length - 1,
+        toInsert,
+        duplicates,
+        errors,
+        errorCount,
+        warnings,
+        existingInRange,
+        minDate,
+        maxDate,
+      });
+    } catch (e) {
+      setImportMessage(
+        "CSVの読み込みに失敗しました: " + (e instanceof Error ? e.message : String(e))
+      );
+    } finally {
+      setImportBusy(false);
+    }
+  };
+
+  const executeImportCsv = async () => {
+    if (!user || !importPreview) return;
+
+    const rows = importPreview.toInsert;
+
+    if (rows.length === 0 || importPreview.errorCount > 0) return;
+
+    if (!window.confirm(`${rows.length}件の明細を取り込みます。よろしいですか？`)) {
+      return;
+    }
+
+    setImportBusy(true);
+    setImportMessage("");
+
+    // 取込分は external_row_key が「csvimport:取込ID:行番号」になる（後から取消せる）
+    const batchId = Date.now().toString(36);
+    const chunkSize = 500;
+    let inserted = 0;
+
+    for (let start = 0; start < rows.length; start += chunkSize) {
+      const chunk = rows.slice(start, start + chunkSize).map((r, idx) => ({
+        user_id: user.id,
+        wallet_id: r.walletId,
+        txn_date: r.date,
+        posting_date: r.date,
+        amount: r.amount,
+        direction: r.direction,
+        category_id: r.categoryId,
+        payment_account_id: r.direction === "expense" ? r.accountId : null,
+        receive_account_id: r.direction === "income" ? r.accountId : null,
+        merchant_name: r.merchant,
+        description: r.memo,
+        transaction_type:
+          r.direction === "income"
+            ? "income"
+            : r.direction === "transfer"
+              ? "transfer"
+              : "cash_expense",
+        import_source_id: null,
+        external_row_key: `csvimport:${batchId}:${start + idx + 1}`,
+        statement_month: r.date.slice(0, 7),
+        is_confirmed: true,
+        is_manual: true,
+        tax_mode: "none",
+        tax_rate: null,
+        tax_amount: null,
+        receipt_group_id: crypto.randomUUID(),
+        receipt_line_no: 1,
+      }));
+
+      const { error } = await supabase.from("transaction_records").insert(chunk);
+
+      if (error) {
+        setImportMessage(
+          `取込エラー（${inserted}件まで取込済み）: ${error.message}。原因を直して同じCSVをもう一度読み込めば、取込済みの行は重複として自動でスキップされます。`
+        );
+        setImportBusy(false);
+        await loadTransactions();
+        return;
+      }
+
+      inserted += chunk.length;
+    }
+
+    setImportMessage(`${inserted}件を取り込みました（取込ID: ${batchId}）`);
+    setImportPreview(null);
+    setImportFileKey((k) => k + 1);
+    setImportBusy(false);
+    await loadTransactions();
+  };
+
   if (authLoading) {
     return (
       <div style={{ maxWidth: "560px", margin: "0 auto", padding: "16px" }}>
@@ -1659,6 +2162,153 @@ export default function Page() {
                   {csvExporting ? "出力中..." : "CSV出力"}
                 </button>
                 {csvMessage && <div style={{ fontSize: "14px" }}>{csvMessage}</div>}
+              </div>
+
+              <div
+                style={{
+                  display: "grid",
+                  gap: "10px",
+                  borderTop: "1px solid #374151",
+                  paddingTop: "10px",
+                }}
+              >
+                <div style={{ fontWeight: "bold" }}>
+                  CSV取込（過去データの一括登録）
+                </div>
+
+                <div style={{ fontSize: "12px", color: "#9ca3af" }}>
+                  見出し行つきのCSV（UTF-8またはShift_JIS）を読み込みます。
+                  列は 日付・区分・金額・財布・大分類・中分類・支払元・支払先・メモ
+                  （日付と金額が必須。区分が空欄なら支出）。
+                  費目と支払元は、先に管理項目へ登録した名前と同じにしてください。
+                  このCSV出力で書き出したファイルも、そのまま取り込めます。
+                </div>
+
+                <div>
+                  <div style={{ marginBottom: "4px" }}>
+                    財布の指定がない行に使う財布
+                  </div>
+                  <select
+                    value={importDefaultWalletId}
+                    onChange={(e) => {
+                      setImportWalletId(e.target.value);
+                      setImportPreview(null);
+                    }}
+                    style={{ width: "100%", padding: "8px" }}
+                  >
+                    {wallets.map((w) => (
+                      <option key={w.id} value={w.id}>
+                        {w.wallet_name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <input
+                  key={importFileKey}
+                  type="file"
+                  accept=".csv,.txt,text/csv"
+                  disabled={importBusy}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) void previewImportCsv(f);
+                  }}
+                />
+
+                {importBusy && <div style={{ fontSize: "14px" }}>処理中...</div>}
+
+                {importPreview && (
+                  <div
+                    style={{
+                      display: "grid",
+                      gap: "6px",
+                      fontSize: "14px",
+                    }}
+                  >
+                    <div style={{ fontWeight: "bold" }}>
+                      {importPreview.fileName}：取込対象{" "}
+                      {importPreview.toInsert.length}件 / 重複でスキップ{" "}
+                      {importPreview.duplicates}件 / エラー{" "}
+                      {importPreview.errorCount}件
+                    </div>
+
+                    {importPreview.minDate && (
+                      <div style={{ fontSize: "12px", color: "#9ca3af" }}>
+                        期間: {importPreview.minDate} 〜 {importPreview.maxDate}
+                        （この期間の既存明細: {importPreview.existingInRange}件）
+                      </div>
+                    )}
+
+                    {importPreview.existingInRange > 0 &&
+                      importPreview.toInsert.length > 0 && (
+                        <div style={{ color: "#fbbf24" }}>
+                          この期間にはすでに明細があります。費目や支払先を変更した明細は重複と判定されないため、二重登録にご注意ください。
+                        </div>
+                      )}
+
+                    {importPreview.warnings.map((w) => (
+                      <div key={w} style={{ color: "#fbbf24" }}>
+                        {w}
+                      </div>
+                    ))}
+
+                    {importPreview.errors.map((m) => (
+                      <div key={m} style={{ color: "#f87171" }}>
+                        {m}
+                      </div>
+                    ))}
+
+                    {importPreview.errorCount > importPreview.errors.length && (
+                      <div style={{ color: "#f87171" }}>
+                        ほか{importPreview.errorCount - importPreview.errors.length}件のエラー
+                      </div>
+                    )}
+
+                    {importPreview.errorCount > 0 && (
+                      <div style={{ color: "#f87171" }}>
+                        エラーを直してから、もう一度読み込んでください。
+                      </div>
+                    )}
+
+                    {importPreview.toInsert.slice(0, 5).map((r) => (
+                      <div
+                        key={r.lineNo}
+                        style={{ fontSize: "12px", color: "#d1d5db" }}
+                      >
+                        {r.date} / {r.direction === "income" ? "収入" : r.direction === "transfer" ? "資金移動" : "支出"} /{" "}
+                        {r.amount.toLocaleString()}円 / {r.categoryLabel}
+                        {r.merchant ? ` / ${r.merchant}` : ""}
+                      </div>
+                    ))}
+
+                    <button
+                      onClick={executeImportCsv}
+                      disabled={
+                        importBusy ||
+                        importPreview.toInsert.length === 0 ||
+                        importPreview.errorCount > 0
+                      }
+                      style={{
+                        padding: "8px 12px",
+                        background: "#e5e7eb",
+                        border: "none",
+                        borderRadius: "8px",
+                        opacity:
+                          importBusy ||
+                          importPreview.toInsert.length === 0 ||
+                          importPreview.errorCount > 0
+                            ? 0.5
+                            : 1,
+                      }}
+                    >
+                      この内容で取り込む（{importPreview.toInsert.length}件）
+                    </button>
+                  </div>
+                )}
+
+                {importMessage && (
+                  <div style={{ fontSize: "14px" }}>{importMessage}</div>
+                )}
               </div>
             </div>
           </div>
