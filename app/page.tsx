@@ -97,6 +97,38 @@ function costKindLabel(value: string | null | undefined) {
   return "未設定";
 }
 
+type CsvCell = string | number | null | undefined;
+
+function toLocalDateString(d: Date) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function csvCell(value: CsvCell) {
+  if (value === null || value === undefined) return "";
+  let s = String(value);
+  // 文字列が = + - @ で始まるとExcelが数式として解釈するため、先頭に ' を付ける
+  if (typeof value === "string" && /^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  if (/[",\r\n]/.test(s)) s = `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+// UTF-8（BOM付き）・CRLFで出力する。ExcelでそのままUTF-8として開ける
+function downloadCsv(filename: string, rows: CsvCell[][]) {
+  const csv = "\uFEFF" + rows.map((r) => r.map(csvCell).join(",")).join("\r\n") + "\r\n";
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 export default function Page() {
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -146,6 +178,14 @@ export default function Page() {
     new Date().toISOString().slice(0, 7)
   );
   const [listWalletId, setListWalletId] = useState("");
+
+  const [csvFrom, setCsvFrom] = useState(() => {
+    const now = new Date();
+    return toLocalDateString(new Date(now.getFullYear(), now.getMonth(), 1));
+  });
+  const [csvTo, setCsvTo] = useState(() => toLocalDateString(new Date()));
+  const [csvExporting, setCsvExporting] = useState(false);
+  const [csvMessage, setCsvMessage] = useState("");
 
   const [walletId, setWalletId] = useState("");
   const [date, setDate] = useState("");
@@ -933,6 +973,116 @@ export default function Page() {
     return "支出";
   };
 
+  const exportTransactionsCsv = async () => {
+    setCsvMessage("");
+
+    if (!csvFrom || !csvTo) {
+      setCsvMessage("開始日と終了日を入力してください");
+      return;
+    }
+    if (csvFrom > csvTo) {
+      setCsvMessage("開始日は終了日以前の日付にしてください");
+      return;
+    }
+
+    setCsvExporting(true);
+
+    // Supabaseは1回の取得が1000件までなので、1000件ずつ全件読む
+    const pageSize = 1000;
+    const all: TransactionListRow[] = [];
+
+    for (let offset = 0; ; offset += pageSize) {
+      let query = supabase
+        .from("transaction_records")
+        .select(`
+          id,
+          txn_date,
+          amount,
+          direction,
+          merchant_name,
+          description,
+          categories:category_id (
+            major_category,
+            minor_category
+          ),
+          accounts:payment_account_id (
+            account_name
+          )
+        `)
+        .gte("txn_date", csvFrom)
+        .lte("txn_date", csvTo);
+
+      if (listWalletId) {
+        query = query.eq("wallet_id", listWalletId);
+      }
+
+      const { data, error } = await query
+        .order("txn_date", { ascending: true })
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(offset, offset + pageSize - 1);
+
+      if (error) {
+        setCsvMessage("CSV出力エラー: " + error.message);
+        setCsvExporting(false);
+        return;
+      }
+
+      const rows = (data as unknown as TransactionListRow[]) || [];
+      all.push(...rows);
+
+      if (rows.length < pageSize) break;
+    }
+
+    if (all.length === 0) {
+      setCsvMessage("指定した期間に該当する明細がありません");
+      setCsvExporting(false);
+      return;
+    }
+
+    const header: CsvCell[] = ["日付", "区分", "金額", "費目", "支払元", "支払先", "メモ"];
+    const lines: CsvCell[][] = all.map((t) => {
+      const category = Array.isArray(t.categories) ? t.categories[0] : t.categories;
+      const account = Array.isArray(t.accounts) ? t.accounts[0] : t.accounts;
+
+      return [
+        t.txn_date,
+        directionLabel(t.direction),
+        Number(t.amount),
+        category ? `${category.major_category} / ${category.minor_category}` : "",
+        account?.account_name ?? "",
+        t.merchant_name ?? "",
+        t.description ?? "",
+      ];
+    });
+
+    downloadCsv(`transactions_${csvFrom}_${csvTo}.csv`, [header, ...lines]);
+    setCsvMessage(`${all.length}件をCSV出力しました`);
+    setCsvExporting(false);
+  };
+
+  const exportCategoriesCsv = () => {
+    if (categories.length === 0) {
+      setMasterMessage("出力する費目がありません");
+      return;
+    }
+
+    const header: CsvCell[] = ["財布種別", "大分類", "中分類", "区分", "表示順"];
+    const lines: CsvCell[][] = categories.map((c) => [
+      c.wallet_type,
+      c.major_category,
+      c.minor_category,
+      costKindLabel(c.category_kind),
+      c.display_order,
+    ]);
+
+    downloadCsv(
+      `categories_${toLocalDateString(new Date())}.csv`,
+      [header, ...lines]
+    );
+    setMasterMessage(`${categories.length}件の費目をCSV出力しました`);
+  };
+
   if (authLoading) {
     return (
       <div style={{ maxWidth: "560px", margin: "0 auto", padding: "16px" }}>
@@ -1426,6 +1576,77 @@ export default function Page() {
                 再読込
               </button>
             </div>
+
+            <div
+              style={{
+                display: "grid",
+                gap: "10px",
+                borderTop: "1px solid #374151",
+                paddingTop: "10px",
+              }}
+            >
+              <div style={{ fontWeight: "bold" }}>CSV出力</div>
+
+              <div
+                style={{
+                  display: "grid",
+                  gap: "10px",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+                }}
+              >
+                <div>
+                  <div style={{ marginBottom: "4px" }}>開始日</div>
+                  <input
+                    type="date"
+                    value={csvFrom}
+                    onChange={(e) => setCsvFrom(e.target.value)}
+                    style={{ width: "100%", padding: "8px" }}
+                  />
+                </div>
+
+                <div>
+                  <div style={{ marginBottom: "4px" }}>終了日</div>
+                  <input
+                    type="date"
+                    value={csvTo}
+                    onChange={(e) => setCsvTo(e.target.value)}
+                    style={{ width: "100%", padding: "8px" }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ fontSize: "12px", color: "#9ca3af" }}>
+                上の「財布」の選択が反映されます（現在:{" "}
+                {listWalletId
+                  ? wallets.find((w) => w.id === listWalletId)?.wallet_name ?? "-"
+                  : "すべて"}
+                ）。画面の月とは別に期間を指定できます。
+              </div>
+
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "12px",
+                  flexWrap: "wrap",
+                }}
+              >
+                <button
+                  onClick={exportTransactionsCsv}
+                  disabled={csvExporting}
+                  style={{
+                    padding: "8px 12px",
+                    background: "#e5e7eb",
+                    border: "none",
+                    borderRadius: "8px",
+                    opacity: csvExporting ? 0.6 : 1,
+                  }}
+                >
+                  {csvExporting ? "出力中..." : "CSV出力"}
+                </button>
+                {csvMessage && <div style={{ fontSize: "14px" }}>{csvMessage}</div>}
+              </div>
+            </div>
           </div>
 
           {listLoading && <div>読み込み中...</div>}
@@ -1846,6 +2067,21 @@ export default function Page() {
             onDelete={(id, name) => deleteAccount(id, name)}
             onReorder={reorderAccounts}
           />
+
+          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <button
+              onClick={exportCategoriesCsv}
+              style={{
+                padding: "10px",
+                background: "#111827",
+                color: "#fff",
+                border: "none",
+                borderRadius: "8px",
+              }}
+            >
+              費目をCSV出力
+            </button>
+          </div>
 
           <SortableCategoryList
             categories={categories}
