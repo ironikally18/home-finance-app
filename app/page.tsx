@@ -93,6 +93,7 @@ function costKindLabel(value: string | null | undefined) {
   if (value === "fixed") return "固定費";
   if (value === "semi") return "準固定費";
   if (value === "variable") return "変動費";
+  if (value === "special") return "特別費";
   if (value === "exclude") return "対象外";
   return "未設定";
 }
@@ -999,6 +1000,8 @@ export default function Page() {
           txn_date,
           amount,
           direction,
+          wallet_id,
+          category_id,
           merchant_name,
           description,
           categories:category_id (
@@ -1040,19 +1043,30 @@ export default function Page() {
       return;
     }
 
-    const header: CsvCell[] = ["日付", "区分", "金額", "費目", "支払元", "支払先", "メモ"];
+    // 費用区分は、費目マスタの「現在の区分」を出力する（区分を変えると過去分の出力も変わる）
+    const header: CsvCell[] = [
+      "日付", "区分", "金額", "財布", "大分類", "中分類", "費用区分",
+      "支払元", "支払先", "メモ", "明細ID",
+    ];
     const lines: CsvCell[][] = all.map((t) => {
       const category = Array.isArray(t.categories) ? t.categories[0] : t.categories;
       const account = Array.isArray(t.accounts) ? t.accounts[0] : t.accounts;
+
+      const wallet = wallets.find((w) => w.id === t.wallet_id);
+      const kind = categories.find((x) => x.id === t.category_id)?.category_kind;
 
       return [
         t.txn_date,
         directionLabel(t.direction),
         Number(t.amount),
-        category ? `${category.major_category} / ${category.minor_category}` : "",
+        wallet?.wallet_name ?? "",
+        category?.major_category ?? "",
+        category?.minor_category ?? "",
+        costKindLabel(kind),
         account?.account_name ?? "",
         t.merchant_name ?? "",
         t.description ?? "",
+        t.id,
       ];
     });
 
@@ -2035,6 +2049,7 @@ export default function Page() {
                   <option value="fixed">固定費</option>
                   <option value="semi">準固定費</option>
                   <option value="variable">変動費</option>
+                  <option value="special">特別費</option>
                   <option value="exclude">対象外</option>
                 </select>
               </div>
@@ -2325,6 +2340,7 @@ function SortableCategoryList({
                             <option value="fixed">固定費</option>
                             <option value="semi">準固定費</option>
                             <option value="variable">変動費</option>
+                            <option value="special">特別費</option>
                             <option value="exclude">対象外</option>
                           </select>
                         </div>
