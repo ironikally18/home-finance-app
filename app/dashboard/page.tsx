@@ -121,6 +121,10 @@ const DASHBOARD_GROUPS = {
 const RENT_MAJOR = "住居費";
 const RENT_MINOR = "家賃";
 
+// 定期収入として扱う収入費目（これ以外の収入は臨時収入として扱う）
+const REGULAR_INCOME_MAJOR = "収入";
+const REGULAR_INCOME_MINORS = ["給料", "通勤手当", "手当・給付"];
+
 // 臨時収入として扱う収入費目（この費目がある月は「通常月」から除く）
 const TEMP_INCOME_MAJOR = "収入";
 const TEMP_INCOME_MINORS = ["賞与", "持株・配当", "年金", "還付・利息"];
@@ -228,6 +232,18 @@ function summarizeMonth(items: Txn[], virtualRent: number) {
     .filter((x) => x.direction === "income")
     .reduce((s, x) => s + Number(x.amount || 0), 0);
 
+  // 定期収入（給料・通勤手当・手当・給付）と、それ以外の臨時収入
+  const regularIncome = items
+    .filter(
+      (x) =>
+        x.direction === "income" &&
+        majorCategory(x) === REGULAR_INCOME_MAJOR &&
+        REGULAR_INCOME_MINORS.includes(minorCategory(x))
+    )
+    .reduce((s, x) => s + Number(x.amount || 0), 0);
+
+  const irregularIncome = income - regularIncome;
+
   const expense = items
     .filter((x) => x.direction === "expense")
     .reduce((s, x) => s + Number(x.amount || 0), 0);
@@ -253,7 +269,10 @@ function summarizeMonth(items: Txn[], virtualRent: number) {
   // 固定費は、費目マスタの区分が「固定費」の費目の合計（下の classifiedTotals）
 
   const engel = expense > 0 ? (foodExpense / expense) * 100 : 0;
-  const savingRate = income > 0 ? (balance / income) * 100 : 0;
+  // 率は定期収入を基準にする（賞与などの臨時収入の月でも率が歪まないように）
+  const regularBalance = regularIncome - expense;
+  const savingRate =
+    regularIncome > 0 ? (regularBalance / regularIncome) * 100 : 0;
 
   // 実費の家賃（住居費 / 家賃）
   const actualRent = items
@@ -274,8 +293,12 @@ function summarizeMonth(items: Txn[], virtualRent: number) {
   const simulatedEngel =
     simulatedExpense > 0 ? (foodExpense / simulatedExpense) * 100 : 0;
 
+  const simulatedRegularBalance = regularIncome - simulatedExpense;
+
   const simulatedSavingRate =
-    income > 0 ? (simulatedBalance / income) * 100 : 0;
+    regularIncome > 0
+      ? (simulatedRegularBalance / regularIncome) * 100
+      : 0;
 
   const classifiedTotals = items
     .filter((x) => x.direction === "expense")
@@ -302,28 +325,32 @@ function summarizeMonth(items: Txn[], virtualRent: number) {
   // 経常支出＝特別費（年払い・単発）を除いた支出
   const recurringExpense =
     fixedExpenseByClass + semiFixedExpense + variableExpense;
-  const recurringBalance = income - recurringExpense;
+  const recurringBalance = regularIncome - recurringExpense;
   const simulatedRecurringBalance = recurringBalance - effectiveVirtualRent;
 
   const fixedRateByClass =
-    income > 0 ? (fixedExpenseByClass / income) * 100 : 0;
+    regularIncome > 0 ? (fixedExpenseByClass / regularIncome) * 100 : 0;
 
   const specialRate =
-    income > 0 ? (specialExpense / income) * 100 : 0;
+    regularIncome > 0 ? (specialExpense / regularIncome) * 100 : 0;
 
   const semiFixedRate =
-    income > 0 ? (semiFixedExpense / income) * 100 : 0;
+    regularIncome > 0 ? (semiFixedExpense / regularIncome) * 100 : 0;
 
   const variableRate =
-    income > 0 ? (variableExpense / income) * 100 : 0;
+    regularIncome > 0 ? (variableExpense / regularIncome) * 100 : 0;
 
   const livingCostRate =
-    income > 0
-      ? ((fixedExpenseByClass + semiFixedExpense) / income) * 100
+    regularIncome > 0
+      ? ((fixedExpenseByClass + semiFixedExpense) / regularIncome) * 100
       : 0;
 
   return {
     income,
+    regularIncome,
+    irregularIncome,
+    regularBalance,
+    simulatedRegularBalance,
     expense,
     balance,
     foodExpense,
@@ -426,6 +453,8 @@ function summarizePeriod(
 
   const totals = {
     income: sumOf(active, (r) => r.s.income),
+    regularIncome: sumOf(active, (r) => r.s.regularIncome),
+    irregularIncome: sumOf(active, (r) => r.s.irregularIncome),
     expense: sumOf(active, (r) => r.s.expense),
     fixed: sumOf(active, (r) => r.s.fixedExpenseByClass),
     semi: sumOf(active, (r) => r.s.semiFixedExpense),
@@ -436,13 +465,15 @@ function summarizePeriod(
 
   const monthlyAvg = {
     income: avgOf(complete, (r) => r.s.income),
+    regularIncome: avgOf(complete, (r) => r.s.regularIncome),
     expense: avgOf(complete, (r) => r.s.expense),
     recurringExpense: avgOf(complete, (r) => r.s.recurringExpense),
     special: avgOf(complete, (r) => r.s.specialExpense),
   };
 
   const normalAvg = {
-    income: avgOf(normal, (r) => r.s.income),
+    // 定期収入の平均
+    income: avgOf(normal, (r) => r.s.regularIncome),
     fixed: avgOf(normal, (r) => r.s.fixedExpenseByClass),
     semi: avgOf(normal, (r) => r.s.semiFixedExpense),
     variable: avgOf(normal, (r) => r.s.variableExpense),
@@ -524,7 +555,7 @@ function buildPeriodReport(
     .filter((r) => r.count > 0)
     .map(
       (r) =>
-        `${r.month} | 収入 ${yen(r.s.income)} | 固定費 ${yen(r.s.fixedExpenseByClass)} | 準固定費 ${yen(r.s.semiFixedExpense)} | 変動費 ${yen(r.s.variableExpense)} | 特別費 ${yen(r.s.specialExpense)} | 経常収支 ${yen(r.s.recurringBalance)} | 仮想家賃込みの経常収支 ${yen(r.s.simulatedRecurringBalance)}${
+        `${r.month} | 定期収入 ${yen(r.s.regularIncome)} | 臨時収入 ${yen(r.s.irregularIncome)} | 固定費 ${yen(r.s.fixedExpenseByClass)} | 準固定費 ${yen(r.s.semiFixedExpense)} | 変動費 ${yen(r.s.variableExpense)} | 特別費 ${yen(r.s.specialExpense)} | 経常収支 ${yen(r.s.recurringBalance)} | 仮想家賃込みの経常収支 ${yen(r.s.simulatedRecurringBalance)}${
           r.tempIncome ? " | 臨時収入あり" : ""
         }${r.s.actualRent > 0 ? " | 実費の家賃あり" : ""}${
           r.partial ? " | 月の途中" : ""
@@ -550,20 +581,20 @@ ${startMonth} 〜 ${endMonth}（データのある${p.activeCount}か月。平�
   }）
 
 【期間合計】
-収入: ${yen(p.totals.income)}
+収入: ${yen(p.totals.income)}（定期収入 ${yen(p.totals.regularIncome)} / 臨時収入 ${yen(p.totals.irregularIncome)}）
 支出: ${yen(p.totals.expense)}
 収支: ${yen(p.totals.income - p.totals.expense)}
 特別費: ${yen(p.totals.special)}
 
 【月平均（完了した${p.completeCount}か月）】
-収入: ${yen(p.monthlyAvg.income)}
+収入: ${yen(p.monthlyAvg.income)}（うち定期収入 ${yen(p.monthlyAvg.regularIncome)}）
 経常支出（特別費を除く）: ${yen(p.monthlyAvg.recurringExpense)}
 特別費の月割り: ${yen(p.specialPerMonth)}（年換算 ${yen(p.specialAnnual)}）
 
 【通常月の平均（臨時収入のない${p.normalCount}か月${
     p.excludedTempMonths.length > 0 ? `。除外: ${p.excludedTempMonths.join("、")}` : ""
   }）】
-収入: ${yen(p.normalAvg.income)}
+定期収入: ${yen(p.normalAvg.income)}
 固定費: ${yen(p.normalAvg.fixed)}
 準固定費: ${yen(p.normalAvg.semi)}
 変動費: ${yen(p.normalAvg.variable)}
@@ -697,10 +728,10 @@ export default function DashboardPage() {
 ${month}
 
 【実家計】
-収入: ${yen(summary.income)}
+収入: ${yen(summary.income)}（定期収入 ${yen(summary.regularIncome)} / 臨時収入 ${yen(summary.irregularIncome)}）
 支出: ${yen(summary.expense)}
 収支: ${yen(summary.balance)}
-貯蓄率: ${pct(summary.savingRate)}
+貯蓄率（定期収入基準）: ${pct(summary.savingRate)}
 
 【仮想家賃込み】
 仮想家賃: ${yen(summary.effectiveVirtualRent)}${
@@ -708,7 +739,7 @@ ${month}
     }
 仮想家賃込み支出: ${yen(summary.simulatedExpense)}
 補正後収支: ${yen(summary.simulatedBalance)}
-補正貯蓄率: ${pct(summary.simulatedSavingRate)}
+補正貯蓄率（定期収入基準）: ${pct(summary.simulatedSavingRate)}
 補正エンゲル係数: ${pct(summary.simulatedEngel)}
 
 【支出分類】
@@ -720,7 +751,7 @@ ${month}
 経常支出（特別費を除く）: ${yen(summary.recurringExpense)}
 経常収支（特別費を除く）: ${yen(summary.recurringBalance)}
 仮想家賃込みの経常収支: ${yen(summary.simulatedRecurringBalance)}
-生活維持費率: ${pct(summary.livingCostRate)}
+生活維持費率（定期収入基準）: ${pct(summary.livingCostRate)}
 
 【お願いしたい分析】
 1. 支出が多い原因
@@ -973,7 +1004,7 @@ ${month}
                 <Card
                   title="通常月の経常収支（平均）"
                   value={yen(periodSummary.normalAvg.recurringBalance)}
-                  note={`臨時収入のない${periodSummary.normalCount}か月の平均。収入 ${yen(periodSummary.normalAvg.income)} − 経常支出 ${yen(periodSummary.normalAvg.recurringExpense)}`}
+                  note={`臨時収入のない${periodSummary.normalCount}か月の平均。定期収入 ${yen(periodSummary.normalAvg.income)} − 経常支出 ${yen(periodSummary.normalAvg.recurringExpense)}`}
                   tone={periodSummary.normalAvg.recurringBalance >= 0 ? "good" : "bad"}
                 />
 
@@ -1000,7 +1031,7 @@ ${month}
                 <Card
                   title="期間の収入合計"
                   value={yen(periodSummary.totals.income)}
-                  note={`月平均 ${yen(periodSummary.monthlyAvg.income)}`}
+                  note={`定期 ${yen(periodSummary.totals.regularIncome)} / 臨時 ${yen(periodSummary.totals.irregularIncome)}`}
                 />
 
                 <Card
@@ -1030,7 +1061,8 @@ ${month}
                     <thead>
                       <tr className="border-b text-gray-600">
                         <th className="px-2 py-2 text-left">月</th>
-                        <th className="px-2 py-2">収入</th>
+                        <th className="px-2 py-2">定期収入</th>
+                        <th className="px-2 py-2">臨時収入</th>
                         <th className="px-2 py-2">経常支出</th>
                         <th className="px-2 py-2">特別費</th>
                         <th className="px-2 py-2">経常収支</th>
@@ -1045,7 +1077,8 @@ ${month}
                           className={`border-b ${r.count === 0 ? "text-gray-400" : ""}`}
                         >
                           <td className="px-2 py-2 text-left font-bold">{r.month}</td>
-                          <td className="px-2 py-2">{yen(r.s.income)}</td>
+                          <td className="px-2 py-2">{yen(r.s.regularIncome)}</td>
+                          <td className="px-2 py-2">{yen(r.s.irregularIncome)}</td>
                           <td className="px-2 py-2">{yen(r.s.recurringExpense)}</td>
                           <td className="px-2 py-2">{yen(r.s.specialExpense)}</td>
                           <td className="px-2 py-2">{yen(r.s.recurringBalance)}</td>
@@ -1122,7 +1155,21 @@ ${month}
         ) : (
           <>
             <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              <Card title="今月の収入" value={yen(summary.income)} />
+              <Card
+                title="今月の収入"
+                value={yen(summary.income)}
+                note="定期収入 + 臨時収入"
+              />
+              <Card
+                title="定期収入"
+                value={yen(summary.regularIncome)}
+                note="給料・通勤手当・手当・給付。率の基準"
+              />
+              <Card
+                title="臨時収入"
+                value={yen(summary.irregularIncome)}
+                note="賞与・持株・配当・年金・還付・利息など"
+              />
               <Card title="今月の支出" value={yen(summary.expense)} />
               <Card
                 title="今月の収支"
@@ -1133,7 +1180,7 @@ ${month}
               <Card
                 title="固定費"
                 value={yen(summary.fixedExpenseByClass)}
-                note={`収入比 ${pct(summary.fixedRateByClass)}`}
+                note={`定期収入比 ${pct(summary.fixedRateByClass)}`}
               />
 
               <Card
@@ -1151,13 +1198,13 @@ ${month}
               <Card
                 title="特別費"
                 value={yen(summary.specialExpense)}
-                note={`年払い・単発など / 収入比 ${pct(summary.specialRate)}`}
+                note={`年払い・単発など / 定期収入比 ${pct(summary.specialRate)}`}
               />
 
               <Card
                 title="経常収支"
                 value={yen(summary.recurringBalance)}
-                note="収入 − (固定費 + 準固定費 + 変動費)。特別費を除く"
+                note="定期収入 − (固定費 + 準固定費 + 変動費)。特別費を除く"
                 tone={summary.recurringBalance >= 0 ? "good" : "bad"}
               />
 
@@ -1171,7 +1218,7 @@ ${month}
               <Card
                 title="生活維持費率"
                 value={pct(summary.livingCostRate)}
-                note="固定費 + 準固定費 ÷ 収入"
+                note="固定費 + 準固定費 ÷ 定期収入"
               />
 
               <Card
@@ -1186,17 +1233,17 @@ ${month}
               <Card
                 title="固定費率"
                 value={pct(summary.fixedRateByClass)}
-                note={`固定費 ${yen(summary.fixedExpenseByClass)} ÷ 収入 ${yen(
-                  summary.income
+                note={`固定費 ${yen(summary.fixedExpenseByClass)} ÷ 定期収入 ${yen(
+                  summary.regularIncome
                 )}`}
                 tone={fixedTone}
               />
 
               <Card
-                title="貯蓄率"
+                title="貯蓄率（定期収入基準）"
                 value={pct(summary.savingRate)}
-                note={`収支 ${yen(summary.balance)} ÷ 収入 ${yen(
-                  summary.income
+                note={`(定期収入 − 支出) ${yen(summary.regularBalance)} ÷ 定期収入 ${yen(
+                  summary.regularIncome
                 )}`}
                 tone={savingTone}
               />
@@ -1222,10 +1269,10 @@ ${month}
               />
 
               <Card
-                title="補正貯蓄率"
+                title="補正貯蓄率（定期収入基準）"
                 value={pct(summary.simulatedSavingRate)}
-                note={`補正後収支 ${yen(summary.simulatedBalance)} ÷ 収入 ${yen(
-                  summary.income
+                note={`(定期収入 − 仮想家賃込み支出) ${yen(summary.simulatedRegularBalance)} ÷ 定期収入 ${yen(
+                  summary.regularIncome
                 )}`}
                 tone={simulatedSavingTone}
               />

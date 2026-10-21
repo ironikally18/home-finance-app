@@ -18,6 +18,10 @@ type Row = {
   | null;
 };
 
+// 定期収入として扱う収入費目（これ以外の収入は臨時収入）
+const REGULAR_INCOME_MAJOR = "収入";
+const REGULAR_INCOME_MINORS = ["給料", "通勤手当", "手当・給付"];
+
 export default function SummaryPage() {
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
   const [rows, setRows] = useState<Row[]>([]);
@@ -103,6 +107,7 @@ export default function SummaryPage() {
 
   const summary = useMemo(() => {
     let income = 0;
+    let regularIncome = 0;
     let expense = 0;
     const categoryMap = new Map<string, number>();
     const kindTotals = { fixed: 0, semi: 0, variable: 0, special: 0 };
@@ -112,6 +117,18 @@ export default function SummaryPage() {
 
       if (r.direction === "income") {
         income += amount;
+
+        const incomeCat = Array.isArray(r.categories)
+          ? r.categories[0]
+          : r.categories;
+
+        if (
+          incomeCat?.major_category === REGULAR_INCOME_MAJOR &&
+          REGULAR_INCOME_MINORS.includes(incomeCat.minor_category)
+        ) {
+          regularIncome += amount;
+        }
+
         return;
       }
 
@@ -146,6 +163,8 @@ export default function SummaryPage() {
 
     return {
       income,
+      regularIncome,
+      irregularIncome: income - regularIncome,
       expense,
       balance: income - expense,
       kindTotals,
@@ -203,6 +222,18 @@ export default function SummaryPage() {
         <Box title="収入" value={summary.income} />
         <Box title="支出" value={summary.expense} />
         <Box title="差額" value={summary.balance} />
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(2, 1fr)",
+          gap: "8px",
+          marginBottom: "16px",
+        }}
+      >
+        <Box title="定期収入（給料・手当など）" value={summary.regularIncome} />
+        <Box title="臨時収入（賞与・年金など）" value={summary.irregularIncome} />
       </div>
 
       <h2 style={{ fontSize: "18px", marginTop: "20px" }}>区分別支出</h2>
