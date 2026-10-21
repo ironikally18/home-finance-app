@@ -122,11 +122,11 @@ const RENT_MAJOR = "住居費";
 const RENT_MINOR = "家賃";
 
 // 定期収入として扱う収入費目（これ以外の収入は臨時収入として扱う）
-const REGULAR_INCOME_MAJOR = "収入";
+const REGULAR_INCOME_MAJOR = "定期収入";
 const REGULAR_INCOME_MINORS = ["給料", "通勤手当", "手当・給付"];
 
 // 臨時収入として扱う収入費目（この費目がある月は「通常月」から除く）
-const TEMP_INCOME_MAJOR = "収入";
+const TEMP_INCOME_MAJOR = "臨時収入";
 const TEMP_INCOME_MINORS = ["賞与", "持株・配当", "年金", "還付・利息"];
 // 臨時収入の合計がこの金額以上の月だけ、通常月から除く（数千円の利息などで除外しないため）
 const TEMP_INCOME_MIN = 50000;

@@ -19,7 +19,7 @@ type Row = {
 };
 
 // 定期収入として扱う収入費目（これ以外の収入は臨時収入）
-const REGULAR_INCOME_MAJOR = "収入";
+const REGULAR_INCOME_MAJOR = "定期収入";
 const REGULAR_INCOME_MINORS = ["給料", "通勤手当", "手当・給付"];
 
 export default function SummaryPage() {
