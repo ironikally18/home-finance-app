@@ -87,7 +87,7 @@ type TransactionListRow = {
   direction: string;
 };
 
-type ScreenMode = "entry" | "list" | "masters";
+type ScreenMode = "entry" | "list" | "csv" | "masters";
 
 function costKindLabel(value: string | null | undefined) {
   if (value === "fixed") return "固定費";
@@ -1772,6 +1772,19 @@ export default function Page() {
         >
           項目管理
         </button>
+        <button
+          onClick={() => setScreenMode("csv")}
+          style={{
+            flex: 1,
+            padding: "10px",
+            borderRadius: "8px",
+            border: "none",
+            background: screenMode === "csv" ? "#111827" : "#e5e7eb",
+            color: screenMode === "csv" ? "#fff" : "#111827",
+          }}
+        >
+          CSV管理
+        </button>
         <a href="/graph">
           <button
             style={{
@@ -2094,223 +2107,6 @@ export default function Page() {
               </button>
             </div>
 
-            <div
-              style={{
-                display: "grid",
-                gap: "10px",
-                borderTop: "1px solid #374151",
-                paddingTop: "10px",
-              }}
-            >
-              <div style={{ fontWeight: "bold" }}>CSV出力</div>
-
-              <div
-                style={{
-                  display: "grid",
-                  gap: "10px",
-                  gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
-                }}
-              >
-                <div>
-                  <div style={{ marginBottom: "4px" }}>開始日</div>
-                  <input
-                    type="date"
-                    value={csvFrom}
-                    onChange={(e) => setCsvFrom(e.target.value)}
-                    style={{ width: "100%", padding: "8px" }}
-                  />
-                </div>
-
-                <div>
-                  <div style={{ marginBottom: "4px" }}>終了日</div>
-                  <input
-                    type="date"
-                    value={csvTo}
-                    onChange={(e) => setCsvTo(e.target.value)}
-                    style={{ width: "100%", padding: "8px" }}
-                  />
-                </div>
-              </div>
-
-              <div style={{ fontSize: "12px", color: "#9ca3af" }}>
-                上の「財布」の選択が反映されます（現在:{" "}
-                {listWalletId
-                  ? wallets.find((w) => w.id === listWalletId)?.wallet_name ?? "-"
-                  : "すべて"}
-                ）。画面の月とは別に期間を指定できます。
-              </div>
-
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "12px",
-                  flexWrap: "wrap",
-                }}
-              >
-                <button
-                  onClick={exportTransactionsCsv}
-                  disabled={csvExporting}
-                  style={{
-                    padding: "8px 12px",
-                    background: "#e5e7eb",
-                    border: "none",
-                    borderRadius: "8px",
-                    opacity: csvExporting ? 0.6 : 1,
-                  }}
-                >
-                  {csvExporting ? "出力中..." : "CSV出力"}
-                </button>
-                {csvMessage && <div style={{ fontSize: "14px" }}>{csvMessage}</div>}
-              </div>
-
-              <div
-                style={{
-                  display: "grid",
-                  gap: "10px",
-                  borderTop: "1px solid #374151",
-                  paddingTop: "10px",
-                }}
-              >
-                <div style={{ fontWeight: "bold" }}>
-                  CSV取込（過去データの一括登録）
-                </div>
-
-                <div style={{ fontSize: "12px", color: "#9ca3af" }}>
-                  見出し行つきのCSV（UTF-8またはShift_JIS）を読み込みます。
-                  列は 日付・区分・金額・財布・大分類・中分類・支払元・支払先・メモ
-                  （日付と金額が必須。区分が空欄なら支出）。
-                  費目と支払元は、先に管理項目へ登録した名前と同じにしてください。
-                  このCSV出力で書き出したファイルも、そのまま取り込めます。
-                </div>
-
-                <div>
-                  <div style={{ marginBottom: "4px" }}>
-                    財布の指定がない行に使う財布
-                  </div>
-                  <select
-                    value={importDefaultWalletId}
-                    onChange={(e) => {
-                      setImportWalletId(e.target.value);
-                      setImportPreview(null);
-                    }}
-                    style={{ width: "100%", padding: "8px" }}
-                  >
-                    {wallets.map((w) => (
-                      <option key={w.id} value={w.id}>
-                        {w.wallet_name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <input
-                  key={importFileKey}
-                  type="file"
-                  accept=".csv,.txt,text/csv"
-                  disabled={importBusy}
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) void previewImportCsv(f);
-                  }}
-                />
-
-                {importBusy && <div style={{ fontSize: "14px" }}>処理中...</div>}
-
-                {importPreview && (
-                  <div
-                    style={{
-                      display: "grid",
-                      gap: "6px",
-                      fontSize: "14px",
-                    }}
-                  >
-                    <div style={{ fontWeight: "bold" }}>
-                      {importPreview.fileName}：取込対象{" "}
-                      {importPreview.toInsert.length}件 / 重複でスキップ{" "}
-                      {importPreview.duplicates}件 / エラー{" "}
-                      {importPreview.errorCount}件
-                    </div>
-
-                    {importPreview.minDate && (
-                      <div style={{ fontSize: "12px", color: "#9ca3af" }}>
-                        期間: {importPreview.minDate} 〜 {importPreview.maxDate}
-                        （この期間の既存明細: {importPreview.existingInRange}件）
-                      </div>
-                    )}
-
-                    {importPreview.existingInRange > 0 &&
-                      importPreview.toInsert.length > 0 && (
-                        <div style={{ color: "#fbbf24" }}>
-                          この期間にはすでに明細があります。費目や支払先を変更した明細は重複と判定されないため、二重登録にご注意ください。
-                        </div>
-                      )}
-
-                    {importPreview.warnings.map((w) => (
-                      <div key={w} style={{ color: "#fbbf24" }}>
-                        {w}
-                      </div>
-                    ))}
-
-                    {importPreview.errors.map((m) => (
-                      <div key={m} style={{ color: "#f87171" }}>
-                        {m}
-                      </div>
-                    ))}
-
-                    {importPreview.errorCount > importPreview.errors.length && (
-                      <div style={{ color: "#f87171" }}>
-                        ほか{importPreview.errorCount - importPreview.errors.length}件のエラー
-                      </div>
-                    )}
-
-                    {importPreview.errorCount > 0 && (
-                      <div style={{ color: "#f87171" }}>
-                        エラーを直してから、もう一度読み込んでください。
-                      </div>
-                    )}
-
-                    {importPreview.toInsert.slice(0, 5).map((r) => (
-                      <div
-                        key={r.lineNo}
-                        style={{ fontSize: "12px", color: "#d1d5db" }}
-                      >
-                        {r.date} / {r.direction === "income" ? "収入" : r.direction === "transfer" ? "資金移動" : "支出"} /{" "}
-                        {r.amount.toLocaleString()}円 / {r.categoryLabel}
-                        {r.merchant ? ` / ${r.merchant}` : ""}
-                      </div>
-                    ))}
-
-                    <button
-                      onClick={executeImportCsv}
-                      disabled={
-                        importBusy ||
-                        importPreview.toInsert.length === 0 ||
-                        importPreview.errorCount > 0
-                      }
-                      style={{
-                        padding: "8px 12px",
-                        background: "#e5e7eb",
-                        border: "none",
-                        borderRadius: "8px",
-                        opacity:
-                          importBusy ||
-                          importPreview.toInsert.length === 0 ||
-                          importPreview.errorCount > 0
-                            ? 0.5
-                            : 1,
-                      }}
-                    >
-                      この内容で取り込む（{importPreview.toInsert.length}件）
-                    </button>
-                  </div>
-                )}
-
-                {importMessage && (
-                  <div style={{ fontSize: "14px" }}>{importMessage}</div>
-                )}
-              </div>
-            </div>
           </div>
 
           {listLoading && <div>読み込み中...</div>}
@@ -2569,6 +2365,239 @@ export default function Page() {
               </table>
             </div>
           )}
+        </div>
+      )}
+
+      {screenMode === "csv" && (
+        <div
+          style={{
+            display: "grid",
+            gap: "16px",
+            background: "#111827",
+            color: "#fff",
+            border: "1px solid #374151",
+            borderRadius: "8px",
+            padding: "12px",
+          }}
+        >
+          <h2 style={{ margin: 0, fontSize: "18px" }}>CSV管理</h2>
+            <div
+              style={{
+                display: "grid",
+                gap: "10px",
+                borderTop: "1px solid #374151",
+                paddingTop: "10px",
+              }}
+            >
+              <div style={{ fontWeight: "bold" }}>CSV出力</div>
+
+              <div
+                style={{
+                  display: "grid",
+                  gap: "10px",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+                }}
+              >
+                <div>
+                  <div style={{ marginBottom: "4px" }}>開始日</div>
+                  <input
+                    type="date"
+                    value={csvFrom}
+                    onChange={(e) => setCsvFrom(e.target.value)}
+                    style={{ width: "100%", padding: "8px" }}
+                  />
+                </div>
+
+                <div>
+                  <div style={{ marginBottom: "4px" }}>終了日</div>
+                  <input
+                    type="date"
+                    value={csvTo}
+                    onChange={(e) => setCsvTo(e.target.value)}
+                    style={{ width: "100%", padding: "8px" }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ fontSize: "12px", color: "#9ca3af" }}>
+                上の「財布」の選択が反映されます（現在:{" "}
+                {listWalletId
+                  ? wallets.find((w) => w.id === listWalletId)?.wallet_name ?? "-"
+                  : "すべて"}
+                ）。画面の月とは別に期間を指定できます。
+              </div>
+
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "12px",
+                  flexWrap: "wrap",
+                }}
+              >
+                <button
+                  onClick={exportTransactionsCsv}
+                  disabled={csvExporting}
+                  style={{
+                    padding: "8px 12px",
+                    background: "#e5e7eb",
+                    border: "none",
+                    borderRadius: "8px",
+                    opacity: csvExporting ? 0.6 : 1,
+                  }}
+                >
+                  {csvExporting ? "出力中..." : "CSV出力"}
+                </button>
+                {csvMessage && <div style={{ fontSize: "14px" }}>{csvMessage}</div>}
+              </div>
+
+              <div
+                style={{
+                  display: "grid",
+                  gap: "10px",
+                  borderTop: "1px solid #374151",
+                  paddingTop: "10px",
+                }}
+              >
+                <div style={{ fontWeight: "bold" }}>
+                  CSV取込（過去データの一括登録）
+                </div>
+
+                <div style={{ fontSize: "12px", color: "#9ca3af" }}>
+                  見出し行つきのCSV（UTF-8またはShift_JIS）を読み込みます。
+                  列は 日付・区分・金額・財布・大分類・中分類・支払元・支払先・メモ
+                  （日付と金額が必須。区分が空欄なら支出）。
+                  費目と支払元は、先に管理項目へ登録した名前と同じにしてください。
+                  このCSV出力で書き出したファイルも、そのまま取り込めます。
+                </div>
+
+                <div>
+                  <div style={{ marginBottom: "4px" }}>
+                    財布の指定がない行に使う財布
+                  </div>
+                  <select
+                    value={importDefaultWalletId}
+                    onChange={(e) => {
+                      setImportWalletId(e.target.value);
+                      setImportPreview(null);
+                    }}
+                    style={{ width: "100%", padding: "8px" }}
+                  >
+                    {wallets.map((w) => (
+                      <option key={w.id} value={w.id}>
+                        {w.wallet_name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <input
+                  key={importFileKey}
+                  type="file"
+                  accept=".csv,.txt,text/csv"
+                  disabled={importBusy}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) void previewImportCsv(f);
+                  }}
+                />
+
+                {importBusy && <div style={{ fontSize: "14px" }}>処理中...</div>}
+
+                {importPreview && (
+                  <div
+                    style={{
+                      display: "grid",
+                      gap: "6px",
+                      fontSize: "14px",
+                    }}
+                  >
+                    <div style={{ fontWeight: "bold" }}>
+                      {importPreview.fileName}：取込対象{" "}
+                      {importPreview.toInsert.length}件 / 重複でスキップ{" "}
+                      {importPreview.duplicates}件 / エラー{" "}
+                      {importPreview.errorCount}件
+                    </div>
+
+                    {importPreview.minDate && (
+                      <div style={{ fontSize: "12px", color: "#9ca3af" }}>
+                        期間: {importPreview.minDate} 〜 {importPreview.maxDate}
+                        （この期間の既存明細: {importPreview.existingInRange}件）
+                      </div>
+                    )}
+
+                    {importPreview.existingInRange > 0 &&
+                      importPreview.toInsert.length > 0 && (
+                        <div style={{ color: "#fbbf24" }}>
+                          この期間にはすでに明細があります。費目や支払先を変更した明細は重複と判定されないため、二重登録にご注意ください。
+                        </div>
+                      )}
+
+                    {importPreview.warnings.map((w) => (
+                      <div key={w} style={{ color: "#fbbf24" }}>
+                        {w}
+                      </div>
+                    ))}
+
+                    {importPreview.errors.map((m) => (
+                      <div key={m} style={{ color: "#f87171" }}>
+                        {m}
+                      </div>
+                    ))}
+
+                    {importPreview.errorCount > importPreview.errors.length && (
+                      <div style={{ color: "#f87171" }}>
+                        ほか{importPreview.errorCount - importPreview.errors.length}件のエラー
+                      </div>
+                    )}
+
+                    {importPreview.errorCount > 0 && (
+                      <div style={{ color: "#f87171" }}>
+                        エラーを直してから、もう一度読み込んでください。
+                      </div>
+                    )}
+
+                    {importPreview.toInsert.slice(0, 5).map((r) => (
+                      <div
+                        key={r.lineNo}
+                        style={{ fontSize: "12px", color: "#d1d5db" }}
+                      >
+                        {r.date} / {r.direction === "income" ? "収入" : r.direction === "transfer" ? "資金移動" : "支出"} /{" "}
+                        {r.amount.toLocaleString()}円 / {r.categoryLabel}
+                        {r.merchant ? ` / ${r.merchant}` : ""}
+                      </div>
+                    ))}
+
+                    <button
+                      onClick={executeImportCsv}
+                      disabled={
+                        importBusy ||
+                        importPreview.toInsert.length === 0 ||
+                        importPreview.errorCount > 0
+                      }
+                      style={{
+                        padding: "8px 12px",
+                        background: "#e5e7eb",
+                        border: "none",
+                        borderRadius: "8px",
+                        opacity:
+                          importBusy ||
+                          importPreview.toInsert.length === 0 ||
+                          importPreview.errorCount > 0
+                            ? 0.5
+                            : 1,
+                      }}
+                    >
+                      この内容で取り込む（{importPreview.toInsert.length}件）
+                    </button>
+                  </div>
+                )}
+
+                {importMessage && (
+                  <div style={{ fontSize: "14px" }}>{importMessage}</div>
+                )}
+              </div>
+            </div>
         </div>
       )}
 
