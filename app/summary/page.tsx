@@ -18,9 +18,12 @@ type Row = {
   | null;
 };
 
-// 定期収入として扱う収入費目（これ以外の収入は臨時収入）
-const REGULAR_INCOME_MAJOR = "定期収入";
-const REGULAR_INCOME_MINORS = ["給料", "通勤手当", "手当・給付"];
+// 収入の費目の判定
+// ・大分類が「定期収入」なら定期収入、それ以外の収入は臨時収入として扱う
+// ・大分類が従来の「収入」の場合は、中分類の名前で判定する
+const REGULAR_INCOME_MAJORS = ["定期収入"];
+const INCOME_MAJOR_LEGACY = "収入";
+const REGULAR_INCOME_MINORS = ["給料", "手当・給付"];
 
 export default function SummaryPage() {
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
@@ -122,9 +125,13 @@ export default function SummaryPage() {
           ? r.categories[0]
           : r.categories;
 
+        const incomeMajor = incomeCat?.major_category?.trim() ?? "";
+        const incomeMinor = incomeCat?.minor_category?.trim() ?? "";
+
         if (
-          incomeCat?.major_category === REGULAR_INCOME_MAJOR &&
-          REGULAR_INCOME_MINORS.includes(incomeCat.minor_category)
+          REGULAR_INCOME_MAJORS.includes(incomeMajor) ||
+          (incomeMajor === INCOME_MAJOR_LEGACY &&
+            REGULAR_INCOME_MINORS.includes(incomeMinor))
         ) {
           regularIncome += amount;
         }
@@ -319,11 +326,11 @@ function BottomNav() {
       }}
     >
       <Nav href="/" label="🏠" />
-      <Nav href="/fixed-costs" label="固定費" />
+      <Nav href="/fixed-costs" label="📌" />
       <Nav href="/summary" label="📊" />
       <Nav href="/graph" label="📈" />
       <Nav href="/calendar" label="📅" />
-      <Nav href="/dashboard" label="指標" />
+      <Nav href="/dashboard" label="🧭" />
       <Nav href="/kids" label="👦" />
       <Nav href="/memo" label="📝" />
     </div>

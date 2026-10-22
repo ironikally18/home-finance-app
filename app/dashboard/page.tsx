@@ -121,14 +121,19 @@ const DASHBOARD_GROUPS = {
 const RENT_MAJOR = "住居費";
 const RENT_MINOR = "家賃";
 
-// 定期収入として扱う収入費目（これ以外の収入は臨時収入として扱う）
-const REGULAR_INCOME_MAJOR = "定期収入";
-const REGULAR_INCOME_MINORS = ["給料", "通勤手当", "手当・給付"];
+// 収入の費目の判定
+// ・大分類が「定期収入」なら定期収入、「臨時収入」なら臨時収入として扱う
+// ・大分類が従来の「収入」の場合は、中分類の名前で判定する
+//   （定期収入の名前に載っていない収入は、臨時収入として扱う）
+const REGULAR_INCOME_MAJORS = ["定期収入"];
+const TEMP_INCOME_MAJORS = ["臨時収入"];
+const INCOME_MAJOR_LEGACY = "収入";
+const REGULAR_INCOME_MINORS = ["給料", "手当・給付"];
 
-// 臨時収入として扱う収入費目（この費目がある月は「通常月」から除く）
-const TEMP_INCOME_MAJOR = "臨時収入";
+// 臨時収入の費目の名前（従来の「収入」の場合に、この費目がある月を「通常月」から除く）
 const TEMP_INCOME_MINORS = ["賞与", "持株・配当", "年金", "還付・利息"];
-// 臨時収入の合計がこの金額以上の月だけ、通常月から除く（数千円の利息などで除外しないため）
+// 臨時収入の費目ごとの月合計がこの金額以上の月だけ、通常月から除く
+// （数千〜数万円の利息・立替精算などで、通常月が除外されないようにするため）
 const TEMP_INCOME_MIN = 50000;
 
 function yen(n: number) {
@@ -226,20 +231,35 @@ function costClassOf(x: Txn): CostClass {
   return cat?.category_kind ?? "variable";
 }
 
+function isRegularIncome(x: Txn) {
+  const major = majorCategory(x);
+
+  return (
+    REGULAR_INCOME_MAJORS.includes(major) ||
+    (major === INCOME_MAJOR_LEGACY &&
+      REGULAR_INCOME_MINORS.includes(minorCategory(x)))
+  );
+}
+
+function isTempIncomeCategory(x: Txn) {
+  const major = majorCategory(x);
+
+  return (
+    TEMP_INCOME_MAJORS.includes(major) ||
+    (major === INCOME_MAJOR_LEGACY &&
+      TEMP_INCOME_MINORS.includes(minorCategory(x)))
+  );
+}
+
 // 1か月分の集計
 function summarizeMonth(items: Txn[], virtualRent: number) {
   const income = items
     .filter((x) => x.direction === "income")
     .reduce((s, x) => s + Number(x.amount || 0), 0);
 
-  // 定期収入（給料・通勤手当・手当・給付）と、それ以外の臨時収入
+  // 定期収入（給料・手当・給付）と、それ以外の臨時収入（通勤手当は臨時収入として扱う）
   const regularIncome = items
-    .filter(
-      (x) =>
-        x.direction === "income" &&
-        majorCategory(x) === REGULAR_INCOME_MAJOR &&
-        REGULAR_INCOME_MINORS.includes(minorCategory(x))
-    )
+    .filter((x) => x.direction === "income" && isRegularIncome(x))
     .reduce((s, x) => s + Number(x.amount || 0), 0);
 
   const irregularIncome = income - regularIncome;
@@ -386,16 +406,16 @@ function addMonthsYm(ym: string, delta: number) {
 
 // 臨時収入の費目（賞与・持株・年金など）がある月か
 function hasTempIncome(items: Txn[]) {
-  const total = items
-    .filter(
-      (x) =>
-        x.direction === "income" &&
-        majorCategory(x) === TEMP_INCOME_MAJOR &&
-        TEMP_INCOME_MINORS.includes(minorCategory(x))
-    )
-    .reduce((sum, x) => sum + Number(x.amount || 0), 0);
+  const byCategory = new Map<string, number>();
 
-  return total >= TEMP_INCOME_MIN;
+  items
+    .filter((x) => x.direction === "income" && isTempIncomeCategory(x))
+    .forEach((x) => {
+      const key = `${majorCategory(x)}/${minorCategory(x)}`;
+      byCategory.set(key, (byCategory.get(key) ?? 0) + Number(x.amount || 0));
+    });
+
+  return Array.from(byCategory.values()).some((v) => v >= TEMP_INCOME_MIN);
 }
 
 type MonthRow = {
@@ -403,6 +423,8 @@ type MonthRow = {
   count: number;
   partial: boolean;
   tempIncome: boolean;
+  // 給料の入金がない（定期収入が極端に少ない）月。データ不足の可能性があるため平均から除く
+  lowIncome: boolean;
   s: ReturnType<typeof summarizeMonth>;
 };
 
@@ -443,13 +465,36 @@ function summarizePeriod(
       // 当月（と未来の月）は途中なので、平均から除く
       partial: m >= currentMonth,
       tempIncome: hasTempIncome(its),
+      lowIncome: false,
       s: summarizeMonth(its, virtualRent),
     });
   }
 
   const active = rows.filter((r) => r.count > 0);
-  const complete = active.filter((r) => !r.partial);
-  const normal = complete.filter((r) => !r.tempIncome);
+  const completeAll = active.filter((r) => !r.partial);
+
+  // 定期収入が、完了した月の中央値の半分未満の月は「給料の入金がない月」とみなし、平均から除く
+  const regularSorted = completeAll
+    .map((r) => r.s.regularIncome)
+    .sort((a, b) => a - b);
+
+  const medianRegular =
+    regularSorted.length === 0
+      ? 0
+      : regularSorted.length % 2 === 1
+        ? regularSorted[(regularSorted.length - 1) / 2]
+        : (regularSorted[regularSorted.length / 2 - 1] +
+            regularSorted[regularSorted.length / 2]) /
+          2;
+
+  completeAll.forEach((r) => {
+    r.lowIncome = medianRegular > 0 && r.s.regularIncome < medianRegular * 0.5;
+  });
+
+  const complete = completeAll.filter((r) => !r.lowIncome);
+  // 通常月：給料の入金がある、完了した月すべて。
+  // 臨時収入は定期収入の評価に含めないだけで、その月を除外はしない
+  const normal = complete;
 
   const totals = {
     income: sumOf(active, (r) => r.s.income),
@@ -512,8 +557,8 @@ function summarizePeriod(
     .map(([name, amount]) => ({ name, amount }))
     .sort((a, b) => b.amount - a.amount);
 
-  // 臨時収入の費目がないのに収入が突出している月（給料に臨時収入が混ざっている可能性）
-  const incomes = complete.map((r) => r.s.income).sort((a, b) => a - b);
+  // 定期収入が突出している月（給料に賞与・持株分配などが混ざっている可能性）
+  const incomes = complete.map((r) => r.s.regularIncome).sort((a, b) => a - b);
   const median =
     incomes.length === 0
       ? 0
@@ -522,7 +567,7 @@ function summarizePeriod(
         : (incomes[incomes.length / 2 - 1] + incomes[incomes.length / 2]) / 2;
 
   const suspicious = complete
-    .filter((r) => !r.tempIncome && median > 0 && r.s.income > median * 1.5)
+    .filter((r) => median > 0 && r.s.regularIncome > median * 1.5)
     .map((r) => r.month);
 
   return {
@@ -532,6 +577,7 @@ function summarizePeriod(
     normalCount: normal.length,
     excludedTempMonths: complete.filter((r) => r.tempIncome).map((r) => r.month),
     partialMonths: active.filter((r) => r.partial).map((r) => r.month),
+    lowIncomeMonths: completeAll.filter((r) => r.lowIncome).map((r) => r.month),
     totals,
     monthlyAvg,
     normalAvg,
@@ -558,7 +604,7 @@ function buildPeriodReport(
         `${r.month} | 定期収入 ${yen(r.s.regularIncome)} | 臨時収入 ${yen(r.s.irregularIncome)} | 固定費 ${yen(r.s.fixedExpenseByClass)} | 準固定費 ${yen(r.s.semiFixedExpense)} | 変動費 ${yen(r.s.variableExpense)} | 特別費 ${yen(r.s.specialExpense)} | 経常収支 ${yen(r.s.recurringBalance)} | 仮想家賃込みの経常収支 ${yen(r.s.simulatedRecurringBalance)}${
           r.tempIncome ? " | 臨時収入あり" : ""
         }${r.s.actualRent > 0 ? " | 実費の家賃あり" : ""}${
-          r.partial ? " | 月の途中" : ""
+          r.partial ? " | 月の途中" : ""}${r.lowIncome ? " | 給料入金なし（平均から除外）" : ""
         }`
     )
     .join("\n");
@@ -578,6 +624,8 @@ function buildPeriodReport(
 【対象期間】
 ${startMonth} 〜 ${endMonth}（データのある${p.activeCount}か月。平均は完了した${p.completeCount}か月で計算${
     p.partialMonths.length > 0 ? `。途中の月（${p.partialMonths.join("、")}）は平均から除外` : ""
+  }${
+    p.lowIncomeMonths.length > 0 ? `。給料の入金がない月（${p.lowIncomeMonths.join("、")}）も平均から除外` : ""
   }）
 
 【期間合計】
@@ -591,9 +639,7 @@ ${startMonth} 〜 ${endMonth}（データのある${p.activeCount}か月。平�
 経常支出（特別費を除く）: ${yen(p.monthlyAvg.recurringExpense)}
 特別費の月割り: ${yen(p.specialPerMonth)}（年換算 ${yen(p.specialAnnual)}）
 
-【通常月の平均（臨時収入のない${p.normalCount}か月${
-    p.excludedTempMonths.length > 0 ? `。除外: ${p.excludedTempMonths.join("、")}` : ""
-  }）】
+【通常月の平均（給料の入金がある完了した${p.normalCount}か月。臨時収入は含めない）】
 定期収入: ${yen(p.normalAvg.income)}
 固定費: ${yen(p.normalAvg.fixed)}
 準固定費: ${yen(p.normalAvg.semi)}
@@ -950,7 +996,7 @@ ${month}
                 </div>
               </div>
               <p className="mt-1 text-xs text-gray-600">
-                初期値は先月までの12か月です。当月は途中のため、平均には含めません。
+                初期値は先月までの12か月です。当月と、給料の入金がない月は、平均には含めません。
               </p>
             </>
           )}
@@ -992,11 +1038,19 @@ ${month}
             </div>
           ) : (
             <>
+              {periodSummary.lowIncomeMonths.length > 0 && (
+                <div className="mb-4 rounded-xl border bg-gray-50 p-3 text-sm text-gray-700">
+                  給料の入金がない（定期収入が極端に少ない）月は、データ不足の可能性があるため、平均から除外しています（
+                  {periodSummary.lowIncomeMonths.join("、")}
+                  ）。月別の表には表示されます。
+                </div>
+              )}
+
               {periodSummary.suspicious.length > 0 && (
                 <div className="mb-4 rounded-xl border border-yellow-200 bg-yellow-50 p-3 text-sm text-yellow-800">
-                  臨時収入の費目がないのに収入が突出している月があります（
+                  定期収入が突出している月があります（
                   {periodSummary.suspicious.join("、")}
-                  ）。給料に賞与・持株分配などが混ざっていないか確認してください。このままだと通常月として平均に入ります。
+                  ）。給料に賞与・持株分配などが混ざっていないか確認してください。このままだと、平均に混ざります。
                 </div>
               )}
 
@@ -1004,7 +1058,7 @@ ${month}
                 <Card
                   title="通常月の経常収支（平均）"
                   value={yen(periodSummary.normalAvg.recurringBalance)}
-                  note={`臨時収入のない${periodSummary.normalCount}か月の平均。定期収入 ${yen(periodSummary.normalAvg.income)} − 経常支出 ${yen(periodSummary.normalAvg.recurringExpense)}`}
+                  note={`給料の入金がある${periodSummary.normalCount}か月の平均。臨時収入は含めない。定期収入 ${yen(periodSummary.normalAvg.income)} − 経常支出 ${yen(periodSummary.normalAvg.recurringExpense)}`}
                   tone={periodSummary.normalAvg.recurringBalance >= 0 ? "good" : "bad"}
                 />
 
@@ -1087,6 +1141,7 @@ ${month}
                             {[
                               r.count === 0 ? "データなし" : "",
                               r.tempIncome ? "臨時収入あり" : "",
+                              r.lowIncome ? "給料入金なし（平均から除外）" : "",
                               r.s.actualRent > 0 ? "実費の家賃あり" : "",
                               r.partial && r.count > 0 ? "月の途中" : "",
                             ]
@@ -1163,7 +1218,7 @@ ${month}
               <Card
                 title="定期収入"
                 value={yen(summary.regularIncome)}
-                note="給料・通勤手当・手当・給付。率の基準"
+                note="給料・手当・給付。率の基準"
               />
               <Card
                 title="臨時収入"
@@ -1368,11 +1423,11 @@ function BottomNav() {
       }}
     >
       <Nav href="/" label="🏠" />
-      <Nav href="/fixed-costs" label="固定費" />
+      <Nav href="/fixed-costs" label="📌" />
       <Nav href="/summary" label="📊" />
       <Nav href="/graph" label="📈" />
       <Nav href="/calendar" label="📅" />
-      <Nav href="/dashboard" label="指標" />
+      <Nav href="/dashboard" label="🧭" />
       <Nav href="/kids" label="👦" />
       <Nav href="/memo" label="📝" />
     </div>
