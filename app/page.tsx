@@ -234,7 +234,7 @@ function parseImportDirection(
   const s = normText(raw).toLowerCase();
 
   if (s === "" || s === "支出" || s === "expense") return "expense";
-  if (s === "収入" || s === "income") return "income";
+  if (s === "定期収入" || s === "income") return "income";
   if (s === "資金移動" || s === "振替" || s === "transfer") return "transfer";
 
   return null;
@@ -594,7 +594,7 @@ export default function Page() {
 
       return (
         walletOk &&
-        c.major_category !== "収入" &&
+        c.major_category !== "定期収入" &&
         c.major_category !== "おこづかい収入" &&
         c.major_category !== "資金移動" &&
         c.category_kind !== "exclude"
@@ -1132,7 +1132,7 @@ export default function Page() {
   };
 
   const directionLabel = (direction: string | null) => {
-    if (direction === "income") return "収入";
+    if (direction === "income") return "定期収入";
     if (direction === "transfer") return "資金移動";
     return "支出";
   };
