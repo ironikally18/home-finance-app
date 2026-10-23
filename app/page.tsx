@@ -59,6 +59,7 @@ type TransactionListRow = {
   wallet_id: string | null;
   category_id: string | null;
   payment_account_id: string | null;
+  receive_account_id: string | null;
   merchant_name: string | null;
   description: string | null;
   tax_mode: string | null;
@@ -489,6 +490,7 @@ export default function Page() {
         wallet_id,
         category_id,
         payment_account_id,
+        receive_account_id,
         merchant_name,
         description,
         tax_mode,
@@ -891,7 +893,12 @@ export default function Page() {
     setEditDate(t.txn_date || "");
     setEditAmount(String(t.amount ?? ""));
     setEditCategoryId(t.category_id || "");
-    setEditAccountId(t.payment_account_id || "");
+    // 収入は入金先（receive_account_id）。以前に支払元の列へ入れた収入も読めるようにする
+    setEditAccountId(
+      (t.direction === "income"
+        ? t.receive_account_id || t.payment_account_id
+        : t.payment_account_id) || ""
+    );
     setEditMerchantName(t.merchant_name || "");
     setEditMemo(t.description || "");
     setEditDirection(
@@ -917,7 +924,11 @@ export default function Page() {
         posting_date: editDate,
         amount: Number(editAmount),
         category_id: editCategoryId || null,
-        payment_account_id: editAccountId || null,
+        // 収入は入金先（receive_account_id）、それ以外は支払元（payment_account_id）に保存する
+        payment_account_id:
+          editDirection === "income" ? null : editAccountId || null,
+        receive_account_id:
+          editDirection === "income" ? editAccountId || null : null,
         merchant_name: editMerchantName || null,
         description: editMemo || null,
         statement_month: editDate.slice(0, 7),
@@ -1152,6 +1163,20 @@ export default function Page() {
     await loadData();
   };
 
+  // 一覧・CSVの「支払元」列に出す口座名。支出は支払元、収入は入金先
+  const rowAccountName = (t: TransactionListRow) => {
+    if (t.direction === "income") {
+      const id = t.receive_account_id || t.payment_account_id;
+      const found = id ? accounts.find((a) => a.id === id)?.account_name : "";
+
+      if (found) return found;
+    }
+
+    const embedded = Array.isArray(t.accounts) ? t.accounts[0] : t.accounts;
+
+    return embedded?.account_name ?? "";
+  };
+
   const directionLabel = (direction: string | null) => {
     if (direction === "income") return "収入";
     if (direction === "transfer") return "資金移動";
@@ -1186,6 +1211,8 @@ export default function Page() {
           direction,
           wallet_id,
           category_id,
+          payment_account_id,
+          receive_account_id,
           merchant_name,
           description,
           categories:category_id (
@@ -1234,8 +1261,6 @@ export default function Page() {
     ];
     const lines: CsvCell[][] = all.map((t) => {
       const category = Array.isArray(t.categories) ? t.categories[0] : t.categories;
-      const account = Array.isArray(t.accounts) ? t.accounts[0] : t.accounts;
-
       const wallet = wallets.find((w) => w.id === t.wallet_id);
       const kind = categories.find((x) => x.id === t.category_id)?.category_kind;
 
@@ -1247,7 +1272,7 @@ export default function Page() {
         category?.major_category ?? "",
         category?.minor_category ?? "",
         costKindLabel(kind),
-        account?.account_name ?? "",
+        rowAccountName(t),
         t.merchant_name ?? "",
         t.description ?? "",
         t.id,
@@ -2175,10 +2200,6 @@ export default function Page() {
                       ? t.categories[0]
                       : t.categories;
 
-                    const account = Array.isArray(t.accounts)
-                      ? t.accounts[0]
-                      : t.accounts;
-
                     const isEditing = editingId === t.id;
 
                     return (
@@ -2268,7 +2289,7 @@ export default function Page() {
                               ))}
                             </select>
                           ) : (
-                            account ? account.account_name : "-"
+                            rowAccountName(t) || "-"
                           )}
                         </td>
 
