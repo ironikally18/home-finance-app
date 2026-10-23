@@ -23,9 +23,14 @@ const supabase = createClient(
 );
 
 type Row = {
+  id: string;
   txn_date: string;
   amount: number;
   direction: string;
+  merchant_name: string | null;
+  description: string | null;
+  payment_account_id: string | null;
+  receive_account_id: string | null;
   categories:
     | { major_category: string; minor_category: string }
     | { major_category: string; minor_category: string }[]
@@ -50,6 +55,7 @@ const PAGE_SIZE = 1000;
 // direction の値（収入側の値がDBと違う場合はここだけ直す）
 const DIRECTION_EXPENSE = "expense";
 const DIRECTION_INCOME = "income";
+const DIRECTION_TRANSFER = "transfer";
 
 type Tab = "expense" | "income";
 type CategoryLevel = "major" | "minor";
@@ -115,7 +121,7 @@ export default function GraphPage() {
     if (user) void loadData();
   }, [user]);
 
-  // 1000件ずつ .range() で繰り返し、全件読み込む（支出・収入の両方）
+  // 1000件ずつ .range() で繰り返し、全件読み込む（支出・収入・資金移動）
   const loadData = async () => {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) return;
@@ -129,16 +135,22 @@ export default function GraphPage() {
       const { data, error } = await supabase
         .from("transaction_records")
         .select(`
+          id,
           txn_date,
           amount,
           direction,
+          merchant_name,
+          description,
+          payment_account_id,
+          receive_account_id,
           categories:category_id (
             major_category,
             minor_category
           )
         `)
         .eq("user_id", session.user.id)
-        .in("direction", [DIRECTION_EXPENSE, DIRECTION_INCOME])
+        // 検索の「資金移動」用に、transfer も読み込む（既存のグラフは支出・収入だけを集計する）
+        .in("direction", [DIRECTION_EXPENSE, DIRECTION_INCOME, DIRECTION_TRANSFER])
         // 同じ日付の行がページ境界で重複・欠落しないよう id でも並べる
         .order("txn_date", { ascending: true })
         .order("id", { ascending: true })
@@ -686,10 +698,663 @@ export default function GraphPage() {
         </>
       )}
 
+      {/* 条件を指定して検索・集計 */}
+      <SearchSection rows={rows} monthList={monthList} chartWidth={chartWidth} />
+
       <BottomNav />
     </div>
   );
 }
+
+// ===================== 条件を指定して検索・集計 =====================
+type Category = { id: string; major_category: string; minor_category: string };
+type Account = { id: string; account_name: string };
+
+// 1本の検索条件。入力した項目はすべて満たす明細を集計する（AND）
+type SearchCondition = {
+  id: string;
+  major: string;
+  minor: string;
+  merchant: string;
+  account: string;
+  memo: string;
+  free: string;
+};
+
+type SearchSeries = {
+  id: string;
+  label: string;
+  color: string;
+  monthly: number[];
+  count: number;
+  total: number;
+  rows: Row[];
+};
+
+const MAX_SERIES = 6;
+
+const newSearchCondition = (): SearchCondition => ({
+  id: Math.random().toString(36).slice(2),
+  major: "",
+  minor: "",
+  merchant: "",
+  account: "",
+  memo: "",
+  free: "",
+});
+
+function normText(v: string | null | undefined) {
+  return (v ?? "").normalize("NFKC").toLowerCase();
+}
+
+// スペース区切りの語に分ける（すべてを含むものに一致＝AND）
+function splitWords(v: string) {
+  return normText(v).split(/\s+/).filter(Boolean);
+}
+
+function hasAllWords(target: string | null | undefined, query: string) {
+  const words = splitWords(query);
+
+  if (words.length === 0) return true;
+
+  const t = normText(target);
+
+  return words.every((w) => t.includes(w));
+}
+
+function rowCategory(r: Row) {
+  const c = Array.isArray(r.categories) ? r.categories[0] : r.categories;
+
+  return { major: c?.major_category ?? "", minor: c?.minor_category ?? "" };
+}
+
+function conditionLabel(c: SearchCondition) {
+  const parts = [
+    c.major && c.minor ? `${c.major}/${c.minor}` : c.major || c.minor,
+    c.merchant && `支払先:${c.merchant}`,
+    c.account && `支払元:${c.account}`,
+    c.memo && `メモ:${c.memo}`,
+    c.free && `「${c.free}」`,
+  ].filter(Boolean);
+
+  return parts.length > 0 ? parts.join(" ") : "条件なし（全体）";
+}
+
+function matchesCondition(
+  r: Row,
+  c: SearchCondition,
+  accMap: Map<string, string>
+) {
+  const { major, minor } = rowCategory(r);
+
+  if (c.major && major !== c.major) return false;
+  if (c.minor && minor !== c.minor) return false;
+
+  // 支払元：支出は支払元、収入は入金先の名前で検索する
+  const accountId =
+    r.direction === DIRECTION_INCOME
+      ? r.receive_account_id
+      : r.payment_account_id;
+  const accountName = accountId ? accMap.get(accountId) ?? "" : "";
+
+  if (!hasAllWords(r.merchant_name, c.merchant)) return false;
+  if (!hasAllWords(accountName, c.account)) return false;
+  if (!hasAllWords(r.description, c.memo)) return false;
+
+  // フリーワード：支払先・支払元・メモ・費目名のどこかに含まれていればよい
+  if (c.free.trim()) {
+    const haystack = normText(
+      [r.merchant_name, accountName, r.description, major, minor].join(" ")
+    );
+
+    if (!splitWords(c.free).every((w) => haystack.includes(w))) return false;
+  }
+
+  return true;
+}
+
+function SearchSection({
+  rows,
+  monthList,
+  chartWidth,
+}: {
+  rows: Row[];
+  monthList: string[];
+  chartWidth: number;
+}) {
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [direction, setDirection] = useState<string>(DIRECTION_EXPENSE);
+  const [chartType, setChartType] = useState<"bar" | "line">("bar");
+  const [conditions, setConditions] = useState<SearchCondition[]>(() => [
+    newSearchCondition(),
+  ]);
+  const [detailId, setDetailId] = useState("");
+  const [msg, setMsg] = useState("");
+
+  // 費目・支払元のマスタ（選択肢と、支払元の名前の照合に使う）
+  useEffect(() => {
+    const loadMasters = async () => {
+      const [c, a] = await Promise.all([
+        supabase
+          .from("categories")
+          .select("id, major_category, minor_category")
+          .order("display_order", { ascending: true }),
+        supabase.from("accounts").select("id, account_name"),
+      ]);
+
+      if (c.error || a.error) {
+        setMsg("マスタの読込エラー: " + (c.error?.message || a.error?.message));
+        return;
+      }
+
+      setCategories((c.data as Category[]) || []);
+      setAccounts((a.data as Account[]) || []);
+    };
+
+    void loadMasters();
+  }, []);
+
+  const accMap = useMemo(
+    () => new Map(accounts.map((a) => [a.id, a.account_name])),
+    [accounts]
+  );
+
+  const majors = useMemo(
+    () => Array.from(new Set(categories.map((c) => c.major_category))),
+    [categories]
+  );
+
+  const series = useMemo<SearchSeries[]>(() => {
+    const indexOf = new Map(monthList.map((m, i) => [m, i]));
+    const base = rows.filter((r) => r.direction === direction);
+
+    return conditions.map((c, i) => {
+      const monthly = monthList.map(() => 0);
+      const matched: Row[] = [];
+      let total = 0;
+
+      base.forEach((r) => {
+        const idx = indexOf.get(r.txn_date.slice(0, 7));
+
+        if (idx === undefined) return;
+        if (!matchesCondition(r, c, accMap)) return;
+
+        const amount = Number(r.amount || 0);
+
+        monthly[idx] += amount;
+        total += amount;
+        matched.push(r);
+      });
+
+      return {
+        id: c.id,
+        label: conditionLabel(c),
+        color: COLORS[i % COLORS.length],
+        monthly,
+        count: matched.length,
+        total,
+        rows: matched,
+      };
+    });
+  }, [rows, monthList, direction, conditions, accMap]);
+
+  const chartData = useMemo(
+    () =>
+      monthList.map((month, mi) => {
+        const item: Record<string, number | string> = { month };
+        series.forEach((s, i) => {
+          item[`s${i}`] = s.monthly[mi];
+        });
+        return item;
+      }),
+    [monthList, series]
+  );
+
+  const detail = series.find((s) => s.id === detailId) ?? series[0];
+  const dirLabel =
+    direction === DIRECTION_INCOME
+      ? "収入"
+      : direction === DIRECTION_TRANSFER
+        ? "資金移動"
+        : "支出";
+
+  const updateCondition = (id: string, patch: Partial<SearchCondition>) => {
+    setConditions((list) =>
+      list.map((c) => (c.id === id ? { ...c, ...patch } : c))
+    );
+  };
+
+  const axisFormatter = (v: number) =>
+    v >= 10000 ? `${(v / 10000).toFixed(0)}万` : String(v);
+
+  const tooltipStyle = {
+    background: "#1f2937",
+    border: "1px solid #374151",
+    color: "#f9fafb",
+  };
+
+  return (
+    <div>
+      <SectionTitle title="条件を指定して検索・集計" />
+
+      <div style={{ fontSize: "13px", color: "#9ca3af", marginBottom: "8px" }}>
+        大分類・中分類・支払先・支払元・メモで絞り込んで、月別の合計をグラフにします。
+        期間は上の「表示期間」に従います。複数の検索を並べて比較できます。
+        入力した条件はすべて満たす明細を集計します（AND）。スペースで区切ると、すべての語を含む明細に絞ります。
+        大文字・小文字と全角・半角は区別しません。
+      </div>
+
+      <div style={searchCardStyle}>
+        <div style={{ marginBottom: "4px" }}>区分</div>
+        <select
+          value={direction}
+          onChange={(e) => setDirection(e.target.value)}
+          style={selectStyle}
+        >
+          <option value={DIRECTION_EXPENSE}>支出</option>
+          <option value={DIRECTION_INCOME}>収入</option>
+          <option value={DIRECTION_TRANSFER}>資金移動</option>
+        </select>
+      </div>
+
+      {conditions.map((c, i) => {
+        const minors = categories
+          .filter((x) => x.major_category === c.major)
+          .map((x) => x.minor_category);
+
+        return (
+          <div
+            key={c.id}
+            style={{
+              ...searchCardStyle,
+              borderLeft: `4px solid ${COLORS[i % COLORS.length]}`,
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: "8px",
+                marginBottom: "8px",
+              }}
+            >
+              <div style={{ fontWeight: "bold" }}>
+                検索 {i + 1}：{conditionLabel(c)}
+              </div>
+
+              {conditions.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setConditions((list) => list.filter((x) => x.id !== c.id))
+                  }
+                  style={smallButtonStyle}
+                >
+                  削除
+                </button>
+              )}
+            </div>
+
+            <div
+              style={{
+                display: "grid",
+                gap: "10px",
+                gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+              }}
+            >
+              <div>
+                <div style={fieldLabelStyle}>大分類</div>
+                <select
+                  value={c.major}
+                  onChange={(e) =>
+                    updateCondition(c.id, { major: e.target.value, minor: "" })
+                  }
+                  style={selectStyle}
+                >
+                  <option value="">指定なし</option>
+                  {majors.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <div style={fieldLabelStyle}>中分類</div>
+                <select
+                  value={c.minor}
+                  onChange={(e) =>
+                    updateCondition(c.id, { minor: e.target.value })
+                  }
+                  disabled={!c.major}
+                  style={selectStyle}
+                >
+                  <option value="">指定なし</option>
+                  {minors.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <div style={fieldLabelStyle}>支払先（部分一致）</div>
+                <input
+                  value={c.merchant}
+                  onChange={(e) =>
+                    updateCondition(c.id, { merchant: e.target.value })
+                  }
+                  placeholder="例: ガスト"
+                  style={selectStyle}
+                />
+              </div>
+
+              <div>
+                <div style={fieldLabelStyle}>支払元（部分一致）</div>
+                <input
+                  value={c.account}
+                  onChange={(e) =>
+                    updateCondition(c.id, { account: e.target.value })
+                  }
+                  placeholder="例: 楽天カード"
+                  style={selectStyle}
+                />
+              </div>
+
+              <div>
+                <div style={fieldLabelStyle}>メモ（部分一致）</div>
+                <input
+                  value={c.memo}
+                  onChange={(e) =>
+                    updateCondition(c.id, { memo: e.target.value })
+                  }
+                  placeholder="例: 学童"
+                  style={selectStyle}
+                />
+              </div>
+
+              <div>
+                <div style={fieldLabelStyle}>フリーワード</div>
+                <input
+                  value={c.free}
+                  onChange={(e) =>
+                    updateCondition(c.id, { free: e.target.value })
+                  }
+                  placeholder="支払先・支払元・メモ・費目のどこでも"
+                  style={selectStyle}
+                />
+              </div>
+            </div>
+          </div>
+        );
+      })}
+
+      <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "12px" }}>
+        {conditions.length < MAX_SERIES && (
+          <button
+            type="button"
+            onClick={() =>
+              setConditions((list) => [...list, newSearchCondition()])
+            }
+            style={searchButtonStyle}
+          >
+            ＋ 検索を追加して比較
+          </button>
+        )}
+
+        <button
+          type="button"
+          onClick={() => setChartType(chartType === "bar" ? "line" : "bar")}
+          style={searchButtonStyle}
+        >
+          {chartType === "bar" ? "折れ線グラフにする" : "棒グラフにする"}
+        </button>
+      </div>
+
+      {msg && <div style={{ marginBottom: "8px" }}>{msg}</div>}
+
+      <SectionTitle title={`検索結果：月別の${dirLabel}`} />
+
+      <div style={scrollWrapStyle}>
+        {chartType === "bar" ? (
+          <BarChart
+            width={chartWidth}
+            height={360}
+            data={chartData}
+            margin={{ top: 8, right: 16, left: 8, bottom: 40 }}
+          >
+            <CartesianGrid stroke="#374151" />
+            <XAxis
+              dataKey="month"
+              stroke="#f9fafb"
+              tick={{ fontSize: 12 }}
+              angle={-40}
+              textAnchor="end"
+              interval={0}
+            />
+            <YAxis
+              stroke="#f9fafb"
+              tick={{ fontSize: 12 }}
+              tickFormatter={axisFormatter}
+            />
+            <Tooltip
+              contentStyle={tooltipStyle}
+              formatter={(value) => `${Number(value).toLocaleString()}円`}
+            />
+            <Legend
+              wrapperStyle={{ paddingTop: "8px", color: "#f9fafb", fontSize: "13px" }}
+            />
+            {series.map((s, i) => (
+              <Bar
+                key={s.id}
+                dataKey={`s${i}`}
+                name={`検索${i + 1}：${s.label}`}
+                fill={s.color}
+              />
+            ))}
+          </BarChart>
+        ) : (
+          <LineChart
+            width={chartWidth}
+            height={360}
+            data={chartData}
+            margin={{ top: 8, right: 16, left: 8, bottom: 40 }}
+          >
+            <CartesianGrid stroke="#374151" />
+            <XAxis
+              dataKey="month"
+              stroke="#f9fafb"
+              tick={{ fontSize: 12 }}
+              angle={-40}
+              textAnchor="end"
+              interval={0}
+            />
+            <YAxis
+              stroke="#f9fafb"
+              tick={{ fontSize: 12 }}
+              tickFormatter={axisFormatter}
+            />
+            <Tooltip
+              contentStyle={tooltipStyle}
+              formatter={(value) => `${Number(value).toLocaleString()}円`}
+            />
+            <Legend
+              wrapperStyle={{ paddingTop: "8px", color: "#f9fafb", fontSize: "13px" }}
+            />
+            {series.map((s, i) => (
+              <Line
+                key={s.id}
+                type="monotone"
+                dataKey={`s${i}`}
+                name={`検索${i + 1}：${s.label}`}
+                stroke={s.color}
+                strokeWidth={3}
+                dot={{ r: 4 }}
+              />
+            ))}
+          </LineChart>
+        )}
+      </div>
+
+      <SectionTitle title="検索ごとの集計" />
+
+      <div style={{ display: "grid", gap: "8px", marginBottom: "16px" }}>
+        {series.map((s, i) => {
+          const max = Math.max(...s.monthly, 0);
+          const maxMonth = monthList[s.monthly.indexOf(max)] ?? "-";
+
+          return (
+            <div key={s.id} style={searchCardStyle}>
+              <div style={{ fontWeight: "bold" }}>
+                <span style={{ color: s.color }}>■</span> 検索{i + 1}：{s.label}
+              </div>
+              <div style={{ fontSize: "14px", marginTop: "4px", color: "#d1d5db" }}>
+                合計 {s.total.toLocaleString()}円 / {s.count}件 / 月平均{" "}
+                {Math.round(
+                  monthList.length > 0 ? s.total / monthList.length : 0
+                ).toLocaleString()}
+                円 / 最大{" "}
+                {max > 0 ? `${maxMonth} ${max.toLocaleString()}円` : "-"}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div style={scrollWrapStyle}>
+        <table style={{ minWidth: "100%", fontSize: "13px", textAlign: "right" }}>
+          <thead>
+            <tr style={{ color: "#9ca3af" }}>
+              <th style={{ textAlign: "left", padding: "4px 8px" }}>月</th>
+              {series.map((s, i) => (
+                <th key={s.id} style={{ padding: "4px 8px", color: s.color }}>
+                  検索{i + 1}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {monthList.map((m, mi) => (
+              <tr key={m} style={{ borderTop: "1px solid #374151" }}>
+                <td style={{ textAlign: "left", padding: "4px 8px" }}>{m}</td>
+                {series.map((s) => (
+                  <td key={s.id} style={{ padding: "4px 8px" }}>
+                    {s.monthly[mi] > 0
+                      ? `${s.monthly[mi].toLocaleString()}円`
+                      : "-"}
+                  </td>
+                ))}
+              </tr>
+            ))}
+            <tr style={{ borderTop: "2px solid #374151", fontWeight: "bold" }}>
+              <td style={{ textAlign: "left", padding: "4px 8px" }}>合計</td>
+              {series.map((s) => (
+                <td key={s.id} style={{ padding: "4px 8px" }}>
+                  {s.total.toLocaleString()}円
+                </td>
+              ))}
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <SectionTitle title="該当する明細（新しい順・最大200件）" />
+
+      <select
+        value={detail?.id ?? ""}
+        onChange={(e) => setDetailId(e.target.value)}
+        style={{ ...selectStyle, marginBottom: "8px" }}
+      >
+        {series.map((s, i) => (
+          <option key={s.id} value={s.id}>
+            検索{i + 1}：{s.label}（{s.count}件）
+          </option>
+        ))}
+      </select>
+
+      <div style={{ display: "grid", gap: "6px", marginBottom: "16px" }}>
+        {detail && detail.rows.length === 0 && (
+          <div>該当する明細はありません。</div>
+        )}
+
+        {detail &&
+          [...detail.rows]
+            .sort((a, b) => (a.txn_date < b.txn_date ? 1 : -1))
+            .slice(0, 200)
+            .map((r) => {
+              const { major, minor } = rowCategory(r);
+              const accId =
+                r.direction === DIRECTION_INCOME
+                  ? r.receive_account_id
+                  : r.payment_account_id;
+              const accName = accId ? accMap.get(accId) : "";
+
+              return (
+                <div
+                  key={r.id}
+                  style={{
+                    border: "1px solid #374151",
+                    borderRadius: "8px",
+                    padding: "8px 10px",
+                    fontSize: "13px",
+                    background: "#1f2937",
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span>{r.txn_date}</span>
+                    <b>{Number(r.amount).toLocaleString()}円</b>
+                  </div>
+                  <div style={{ color: "#d1d5db" }}>
+                    {major || minor ? `${major} / ${minor}` : "（費目なし）"}
+                    {r.merchant_name ? ` ・ ${r.merchant_name}` : ""}
+                    {accName ? ` ・ ${accName}` : ""}
+                  </div>
+                  {r.description && (
+                    <div style={{ color: "#9ca3af" }}>{r.description}</div>
+                  )}
+                </div>
+              );
+            })}
+      </div>
+    </div>
+  );
+}
+
+const searchCardStyle: React.CSSProperties = {
+  border: "1px solid #374151",
+  borderRadius: "12px",
+  padding: "12px",
+  background: "#1f2937",
+  marginBottom: "12px",
+};
+
+const fieldLabelStyle: React.CSSProperties = {
+  fontSize: "12px",
+  color: "#d1d5db",
+  marginBottom: "4px",
+};
+
+const searchButtonStyle: React.CSSProperties = {
+  padding: "10px 12px",
+  background: "#e5e7eb",
+  color: "#111827",
+  border: "none",
+  borderRadius: "8px",
+  fontWeight: "bold",
+};
+
+const smallButtonStyle: React.CSSProperties = {
+  padding: "4px 10px",
+  background: "#374151",
+  color: "#f9fafb",
+  border: "none",
+  borderRadius: "6px",
+  fontSize: "12px",
+};
 
 const formatSigned = (n: number) =>
   `${n > 0 ? "+" : ""}${n.toLocaleString()}円`;
