@@ -88,6 +88,52 @@ const listMonths = (start: string, end: string) => {
 
 type Preset = "6" | "12" | "24" | "all" | "custom";
 
+// ---- 縦軸（金額）の目盛り設定 ----
+// 最大値に応じて 1,000 / 2,000 / 5,000 / 10,000 / 20,000 / 50,000 ... の
+// 切りの良い間隔を自動で選び、目盛りを固定する（目盛りは最大 AXIS_MAX_INTERVALS 区間）
+const AXIS_MAX_INTERVALS = 6;
+const AXIS_STEP_CANDIDATES: number[] = (() => {
+  const list: number[] = [];
+  for (let base = 1000; base <= 1e10; base *= 10) list.push(base, base * 2, base * 5);
+  return list;
+})();
+
+function buildYAxis(values: number[]): { domain: [number, number]; ticks: number[] } {
+  const finite = values.filter((v) => Number.isFinite(v));
+  const minV = Math.min(0, ...finite);
+  const maxV = Math.max(0, ...finite);
+  const step =
+    AXIS_STEP_CANDIDATES.find(
+      (st) => Math.ceil(maxV / st) - Math.floor(minV / st) <= AXIS_MAX_INTERVALS
+    ) ?? AXIS_STEP_CANDIDATES[AXIS_STEP_CANDIDATES.length - 1];
+  const lower = Math.floor(minV / step) * step;
+  let upper = Math.ceil(maxV / step) * step;
+  if (upper === lower) upper = lower + step;
+  const ticks: number[] = [];
+  for (let t = lower; t <= upper; t += step) ticks.push(t);
+  return { domain: [lower, upper], ticks };
+}
+
+// 目盛りラベルは円表示（例: 15,000）。万単位への丸めはしない
+const formatYen = (v: number | string) => Number(v).toLocaleString();
+
+// 積み上げ棒グラフ用：月ごとの「プラス合計」と「マイナス合計」を返す
+function stackedExtents(data: Record<string, number | string>[]): number[] {
+  const out: number[] = [];
+  data.forEach((row) => {
+    let pos = 0;
+    let neg = 0;
+    Object.entries(row).forEach(([k, v]) => {
+      if (k === "month") return;
+      const n = Number(v) || 0;
+      if (n >= 0) pos += n;
+      else neg += n;
+    });
+    out.push(pos, neg);
+  });
+  return out;
+}
+
 export default function GraphPage() {
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -373,6 +419,12 @@ export default function GraphPage() {
 
   const chartWidth = Math.max(chartData.length * 80, 600);
 
+  // 各グラフの縦軸（最大値に応じて自動で目盛り間隔を決定）
+  const totalAxis = buildYAxis(totalData.map((d) => d.amount));
+  const balanceAxis = buildYAxis(balanceData.map((d) => d.diff));
+  const stackAxis = buildYAxis(stackedExtents(chartData));
+  const selectedAxis = buildYAxis(selectedCategoryData.map((d) => d.amount));
+
   return (
     <div
       style={{
@@ -524,9 +576,9 @@ export default function GraphPage() {
           <YAxis
             stroke="#f9fafb"
             tick={{ fontSize: 12 }}
-            tickFormatter={(v: number) =>
-              v >= 10000 ? `${(v / 10000).toFixed(0)}万` : String(v)
-            }
+            domain={totalAxis.domain}
+            ticks={totalAxis.ticks}
+            tickFormatter={formatYen}
           />
           <Tooltip
             contentStyle={{ background: "#1f2937", border: "1px solid #374151", color: "#f9fafb" }}
@@ -575,9 +627,9 @@ export default function GraphPage() {
           <YAxis
             stroke="#f9fafb"
             tick={{ fontSize: 12 }}
-            tickFormatter={(v: number) =>
-              Math.abs(v) >= 10000 ? `${(v / 10000).toFixed(0)}万` : String(v)
-            }
+            domain={balanceAxis.domain}
+            ticks={balanceAxis.ticks}
+            tickFormatter={formatYen}
           />
           <Tooltip
             contentStyle={{ background: "#1f2937", border: "1px solid #374151", color: "#f9fafb" }}
@@ -615,9 +667,9 @@ export default function GraphPage() {
             <YAxis
               stroke="#f9fafb"
               tick={{ fontSize: 12 }}
-              tickFormatter={(v) =>
-                Number(v) >= 10000 ? `${(Number(v) / 10000).toFixed(0)}万` : String(v)
-              }
+              domain={stackAxis.domain}
+              ticks={stackAxis.ticks}
+              tickFormatter={formatYen}
             />
             <Tooltip
               contentStyle={{ background: "#1f2937", border: "1px solid #374151", color: "#f9fafb" }}
@@ -675,9 +727,9 @@ export default function GraphPage() {
                 <YAxis
                   stroke="#f9fafb"
                   tick={{ fontSize: 12 }}
-                  tickFormatter={(v: number) =>
-                    v >= 10000 ? `${(v / 10000).toFixed(0)}万` : String(v)
-                  }
+                  domain={selectedAxis.domain}
+                  ticks={selectedAxis.ticks}
+                  tickFormatter={formatYen}
                 />
                 <Tooltip
                   contentStyle={{ background: "#1f2937", border: "1px solid #374151", color: "#f9fafb" }}
@@ -925,8 +977,12 @@ function SearchSection({
     );
   };
 
-  const axisFormatter = (v: number) =>
-    v >= 10000 ? `${(v / 10000).toFixed(0)}万` : String(v);
+  // 縦軸：全検索の月別合計の最大値に応じて目盛り間隔を自動決定
+  const searchAxis = buildYAxis(
+    chartData.flatMap((row) =>
+      series.map((_, i) => Number(row[`s${i}`]) || 0)
+    )
+  );
 
   const tooltipStyle = {
     background: "#1f2937",
@@ -1139,7 +1195,9 @@ function SearchSection({
             <YAxis
               stroke="#f9fafb"
               tick={{ fontSize: 12 }}
-              tickFormatter={axisFormatter}
+              domain={searchAxis.domain}
+              ticks={searchAxis.ticks}
+              tickFormatter={formatYen}
             />
             <Tooltip
               contentStyle={tooltipStyle}
@@ -1176,7 +1234,9 @@ function SearchSection({
             <YAxis
               stroke="#f9fafb"
               tick={{ fontSize: 12 }}
-              tickFormatter={axisFormatter}
+              domain={searchAxis.domain}
+              ticks={searchAxis.ticks}
+              tickFormatter={formatYen}
             />
             <Tooltip
               contentStyle={tooltipStyle}
