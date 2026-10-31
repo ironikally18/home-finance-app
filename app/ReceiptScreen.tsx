@@ -901,17 +901,33 @@ export default function ReceiptScreen({
             </select>
           </div>
 
-          <input
-            key={fileKey}
-            type="file"
-            accept=".tsv,.txt,.csv,text/tab-separated-values,text/plain"
-            multiple
-            disabled={busy}
-            onChange={(e) => {
-              const files = e.target.files;
-              if (files && files.length > 0) void loadFiles(files);
+          <label
+            style={{
+              display: "block",
+              padding: "12px",
+              background: "#e5e7eb",
+              color: "#111827",
+              borderRadius: "8px",
+              textAlign: "center",
+              fontWeight: "bold",
+              cursor: busy ? "not-allowed" : "pointer",
+              opacity: busy ? 0.5 : 1,
             }}
-          />
+          >
+            📄 TSVファイルを選ぶ（複数可）
+            <input
+              key={fileKey}
+              type="file"
+              accept=".tsv,.txt,.csv,text/tab-separated-values,text/plain"
+              multiple
+              disabled={busy}
+              style={{ display: "none" }}
+              onChange={(e) => {
+                const files = e.target.files;
+                if (files && files.length > 0) void loadFiles(files);
+              }}
+            />
+          </label>
 
           {busy && <div style={{ fontSize: "14px" }}>処理中...</div>}
 
