@@ -37,6 +37,18 @@ type Row = {
     | null;
 };
 
+// レシート明細（receipt_items）。明細のあるレシートは、ヘッダー1行の代わりに品目ごとの行で集計する
+type ReceiptItemRow = {
+  id: string;
+  transaction_id: string;
+  item_name: string;
+  amount: number;
+  categories:
+    | { major_category: string; minor_category: string }
+    | { major_category: string; minor_category: string }[]
+    | null;
+};
+
 const COLORS = [
   "#60a5fa",
   "#34d399",
@@ -214,7 +226,74 @@ export default function GraphPage() {
       from += PAGE_SIZE;
     }
 
-    setRows(all);
+    // ---- レシート明細を読み込み、明細のあるレシートは品目ごとの行に置き換える ----
+    const itemRows: ReceiptItemRow[] = [];
+    let itemFrom = 0;
+    let itemError = "";
+
+    while (true) {
+      const { data, error } = await supabase
+        .from("receipt_items")
+        .select(`
+          id,
+          transaction_id,
+          item_name,
+          amount,
+          categories:category_id (
+            major_category,
+            minor_category
+          )
+        `)
+        .eq("user_id", session.user.id)
+        .order("id", { ascending: true })
+        .range(itemFrom, itemFrom + PAGE_SIZE - 1);
+
+      if (error) {
+        itemError = error.message;
+        break;
+      }
+
+      const chunk = (data as unknown as ReceiptItemRow[]) || [];
+      itemRows.push(...chunk);
+
+      if (chunk.length < PAGE_SIZE) break;
+      itemFrom += PAGE_SIZE;
+    }
+
+    const itemsByTxn = new Map<string, ReceiptItemRow[]>();
+    itemRows.forEach((it) => {
+      const list = itemsByTxn.get(it.transaction_id) ?? [];
+      list.push(it);
+      itemsByTxn.set(it.transaction_id, list);
+    });
+
+    const expanded: Row[] = [];
+    all.forEach((r) => {
+      const items = itemsByTxn.get(r.id);
+      if (!items || items.length === 0) {
+        expanded.push(r);
+        return;
+      }
+      // 日付・支払先などはレシートのものを引き継ぎ、金額・費目・メモ（品名）は品目のものを使う
+      items.forEach((it) => {
+        expanded.push({
+          ...r,
+          id: it.id,
+          amount: Number(it.amount || 0),
+          description: it.item_name,
+          categories: it.categories,
+        });
+      });
+    });
+
+    setRows(expanded);
+
+    if (itemError) {
+      setMessage(
+        "レシート明細の読込エラー（レシートは合計行の費目で集計しています）: " +
+          itemError
+      );
+    }
   };
 
   const getCategoryName = (r: Row) => {

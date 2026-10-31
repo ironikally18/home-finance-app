@@ -18,6 +18,7 @@ import {
   arrayMove,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import ReceiptScreen from "./ReceiptScreen";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
@@ -88,7 +89,7 @@ type TransactionListRow = {
   direction: string;
 };
 
-type ScreenMode = "entry" | "list" | "csv" | "masters";
+type ScreenMode = "entry" | "list" | "csv" | "masters" | "receipts";
 
 function costKindLabel(value: string | null | undefined) {
   if (value === "fixed") return "固定費";
@@ -1831,6 +1832,19 @@ export default function Page() {
         >
           CSV管理
         </button>
+        <button
+          onClick={() => setScreenMode("receipts")}
+          style={{
+            flex: 1,
+            padding: "10px",
+            borderRadius: "8px",
+            border: "none",
+            background: screenMode === "receipts" ? "#111827" : "#e5e7eb",
+            color: screenMode === "receipts" ? "#fff" : "#111827",
+          }}
+        >
+          レシート
+        </button>
         <a href="/graph">
           <button
             style={{
@@ -2641,6 +2655,18 @@ export default function Page() {
               </div>
             </div>
         </div>
+      )}
+
+      {screenMode === "receipts" && (
+        <ReceiptScreen
+          supabase={supabase}
+          user={user}
+          wallets={wallets}
+          accounts={accounts}
+          categories={categories}
+          merchantCandidates={merchantCandidates}
+          onChanged={loadTransactions}
+        />
       )}
 
       {screenMode === "masters" && (
