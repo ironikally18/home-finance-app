@@ -337,7 +337,15 @@ export default function Page() {
   const [listMonth, setListMonth] = useState(
     new Date().toISOString().slice(0, 7)
   );
-  const [listWalletId, setListWalletId] = useState("");
+  // 一覧の財布の絞り込み。初期は「家計のみ」（子供財布の取引は除外）。"" はすべての財布
+  const [listWalletId, setListWalletId] = useState("household");
+  const childWalletIds = useMemo(
+    () =>
+      wallets
+        .filter((w) => (w.wallet_type || "").toLowerCase() !== "household")
+        .map((w) => w.id),
+    [wallets]
+  );
 
   const [csvFrom, setCsvFrom] = useState(() => {
     const now = new Date();
@@ -420,7 +428,7 @@ export default function Page() {
     if (user) {
       void loadTransactions();
     }
-  }, [user, listMonth, listWalletId]);
+  }, [user, listMonth, listWalletId, wallets]);
 
   const loadData = async () => {
     setMessage("");
@@ -523,7 +531,13 @@ export default function Page() {
       query = query.gte("txn_date", from).lt("txn_date", to);
     }
 
-    if (listWalletId) {
+    if (listWalletId === "household") {
+      if (childWalletIds.length > 0) {
+        query = query.or(
+          `wallet_id.is.null,wallet_id.not.in.(${childWalletIds.join(",")})`
+        );
+      }
+    } else if (listWalletId) {
       query = query.eq("wallet_id", listWalletId);
     }
 
@@ -1227,7 +1241,13 @@ export default function Page() {
         .gte("txn_date", csvFrom)
         .lte("txn_date", csvTo);
 
-      if (listWalletId) {
+      if (listWalletId === "household") {
+        if (childWalletIds.length > 0) {
+          query = query.or(
+            `wallet_id.is.null,wallet_id.not.in.(${childWalletIds.join(",")})`
+          );
+        }
+      } else if (listWalletId) {
         query = query.eq("wallet_id", listWalletId);
       }
 
@@ -2129,7 +2149,8 @@ export default function Page() {
                   onChange={(e) => setListWalletId(e.target.value)}
                   style={{ width: "100%", padding: "8px" }}
                 >
-                  <option value="">すべて</option>
+                  <option value="household">家計のみ</option>
+                  <option value="">すべての財布</option>
                   {wallets.map((w) => (
                     <option key={w.id} value={w.id}>
                       {w.wallet_name}
@@ -2477,9 +2498,11 @@ export default function Page() {
 
               <div style={{ fontSize: "12px", color: "#9ca3af" }}>
                 上の「財布」の選択が反映されます（現在:{" "}
-                {listWalletId
-                  ? wallets.find((w) => w.id === listWalletId)?.wallet_name ?? "-"
-                  : "すべて"}
+                {listWalletId === "household"
+                  ? "家計のみ"
+                  : listWalletId
+                    ? wallets.find((w) => w.id === listWalletId)?.wallet_name ?? "-"
+                    : "すべての財布"}
                 ）。画面の月とは別に期間を指定できます。
               </div>
 

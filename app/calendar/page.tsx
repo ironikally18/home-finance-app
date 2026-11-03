@@ -21,6 +21,11 @@ type Row = {
   | null;
 };
 
+type WalletRow = { id: string; wallet_name: string; wallet_type: string | null };
+const WALLET_HOUSEHOLD = "household";
+const isChildWallet = (w: WalletRow) =>
+  (w.wallet_type || "").toLowerCase() !== "household";
+
 export default function CalendarPage() {
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
   const [rows, setRows] = useState<Row[]>([]);
@@ -28,6 +33,9 @@ export default function CalendarPage() {
   const [message, setMessage] = useState("");
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [wallets, setWallets] = useState<WalletRow[]>([]);
+  const [walletFilter, setWalletFilter] = useState(WALLET_HOUSEHOLD);
+  const [walletsReady, setWalletsReady] = useState(false);
 
   useEffect(() => {
     const init = async () => {
@@ -53,10 +61,23 @@ export default function CalendarPage() {
   }, []);
 
   useEffect(() => {
-    if (user) {
+    if (!user) return;
+    const loadWallets = async () => {
+      const { data } = await supabase
+        .from("wallets")
+        .select("id, wallet_name, wallet_type")
+        .order("display_order");
+      setWallets((data as WalletRow[]) || []);
+      setWalletsReady(true);
+    };
+    void loadWallets();
+  }, [user]);
+
+  useEffect(() => {
+    if (user && walletsReady) {
       void loadData();
     }
-  }, [user, month]);
+  }, [user, month, walletFilter, walletsReady]);
 
   const loadData = async () => {
     setMessage("");
@@ -80,7 +101,7 @@ export default function CalendarPage() {
 
     const to = `${nextY}-${String(nextM).padStart(2, "0")}-01`;
 
-    const { data, error } = await supabase
+    let query = supabase
       .from("transaction_records")
       .select(`
         id,
@@ -98,6 +119,20 @@ export default function CalendarPage() {
       .gte("txn_date", from)
       .lt("txn_date", to)
       .order("txn_date", { ascending: true });
+
+    // 財布での絞り込み（初期は家計のみ。子供財布の取引は選んだときだけ表示）
+    const childIds = wallets.filter(isChildWallet).map((w) => w.id);
+    if (walletFilter === WALLET_HOUSEHOLD) {
+      if (childIds.length > 0) {
+      query = query.or(
+        `wallet_id.is.null,wallet_id.not.in.(${childIds.join(",")})`
+      );
+      }
+    } else {
+      query = query.eq("wallet_id", walletFilter);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       setMessage("読込エラー: " + error.message);
@@ -192,6 +227,25 @@ export default function CalendarPage() {
           style={inputStyle}
         />
         <button onClick={() => moveMonth(1)} style={buttonStyle}>▶</button>
+      </div>
+
+      <div style={{ marginBottom: "12px" }}>
+        <div style={{ marginBottom: "4px" }}>財布</div>
+        <select
+          value={walletFilter}
+          onChange={(e) => {
+            setWalletFilter(e.target.value);
+            setSelectedDate("");
+          }}
+          style={{ ...inputStyle, width: "100%" }}
+        >
+          <option value={WALLET_HOUSEHOLD}>家計</option>
+          {wallets.filter(isChildWallet).map((w) => (
+            <option key={w.id} value={w.id}>
+              {w.wallet_name}
+            </option>
+          ))}
+        </select>
       </div>
 
       <div

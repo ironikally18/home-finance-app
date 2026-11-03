@@ -31,6 +31,7 @@ type Row = {
   description: string | null;
   payment_account_id: string | null;
   receive_account_id: string | null;
+  wallet_id: string | null;
   categories:
     | { major_category: string; minor_category: string }
     | { major_category: string; minor_category: string }[]
@@ -149,7 +150,14 @@ function stackedExtents(data: Record<string, number | string>[]): number[] {
 export default function GraphPage() {
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [rows, setRows] = useState<Row[]>([]);
+  const [allRows, setAllRows] = useState<Row[]>([]);
+  // 子供財布（household以外）の id → 財布名
+  const [kidsWalletNames, setKidsWalletNames] = useState<Record<string, string>>({});
+  // 全体のグラフ・検索は家計の取引だけを使う（子供財布は費目を選んだときだけ表示）
+  const rows = useMemo(
+    () => allRows.filter((r) => !(r.wallet_id && kidsWalletNames[r.wallet_id])),
+    [allRows, kidsWalletNames]
+  );
   const [tab, setTab] = useState<Tab>("expense");
   const [selectedCategory, setSelectedCategory] = useState("");
   const [categoryLevel, setCategoryLevel] = useState<CategoryLevel>("major");
@@ -186,6 +194,18 @@ export default function GraphPage() {
 
     setMessage("");
 
+    // 子供財布を見分けるため、財布の一覧を読み込む
+    const { data: walletData } = await supabase
+      .from("wallets")
+      .select("id, wallet_name, wallet_type");
+    const kidsMap: Record<string, string> = {};
+    ((walletData as { id: string; wallet_name: string; wallet_type: string | null }[]) ?? []).forEach((w) => {
+      if ((w.wallet_type || "").toLowerCase() !== "household") {
+        kidsMap[w.id] = w.wallet_name;
+      }
+    });
+    setKidsWalletNames(kidsMap);
+
     const all: Row[] = [];
     let from = 0;
 
@@ -201,6 +221,7 @@ export default function GraphPage() {
           description,
           payment_account_id,
           receive_account_id,
+          wallet_id,
           categories:category_id (
             major_category,
             minor_category
@@ -286,7 +307,7 @@ export default function GraphPage() {
       });
     });
 
-    setRows(expanded);
+    setAllRows(expanded);
 
     if (itemError) {
       setMessage(
@@ -305,12 +326,19 @@ export default function GraphPage() {
   };
 
   // 推移グラフ用の分類キー（大分類 or 「大分類 › 中分類」）
+  // 子供財布の取引は「【財布名】」を頭に付け、家計の同名項目と混ざらないようにする
   const getCategoryKey = (r: Row, level: CategoryLevel) => {
-    if (level === "major") return getCategoryName(r);
-    const category = Array.isArray(r.categories)
-      ? r.categories[0]
-      : r.categories;
-    return `${getCategoryName(r)} › ${category?.minor_category || "(中分類なし)"}`;
+    let base: string;
+    if (level === "major") {
+      base = getCategoryName(r);
+    } else {
+      const category = Array.isArray(r.categories)
+        ? r.categories[0]
+        : r.categories;
+      base = `${getCategoryName(r)} › ${category?.minor_category || "(中分類なし)"}`;
+    }
+    const kidsName = r.wallet_id ? kidsWalletNames[r.wallet_id] : undefined;
+    return kidsName ? `【${kidsName}】${base}` : base;
   };
 
   // タブに応じた行だけを使う
@@ -320,6 +348,15 @@ export default function GraphPage() {
         (r) => r.direction === (isIncome ? DIRECTION_INCOME : DIRECTION_EXPENSE)
       ),
     [rows, isIncome]
+  );
+
+  // 子供財布を含むタブ内の全行（費目プルダウンと、選んだ費目の推移だけで使う）
+  const tabRowsAll = useMemo(
+    () =>
+      allRows.filter(
+        (r) => r.direction === (isIncome ? DIRECTION_INCOME : DIRECTION_EXPENSE)
+      ),
+    [allRows, isIncome]
   );
 
   const changeTab = (next: Tab) => {
@@ -380,6 +417,15 @@ export default function GraphPage() {
         return m >= rangeStart && m <= rangeEnd;
       }),
     [tabRows, rangeStart, rangeEnd]
+  );
+
+  const selectedRangeRows = useMemo(
+    () =>
+      tabRowsAll.filter((r) => {
+        const m = r.txn_date.slice(0, 7);
+        return m >= rangeStart && m <= rangeEnd;
+      }),
+    [tabRowsAll, rangeStart, rangeEnd]
   );
 
   const { chartData, categoryNames } = useMemo(() => {
@@ -462,9 +508,10 @@ export default function GraphPage() {
   // 費目プルダウンの候補は、期間にかかわらずタブ内の全データの費目から作る
   const allCategoryNames = useMemo(() => {
     const set = new Set<string>();
-    tabRows.forEach((r) => set.add(getCategoryKey(r, categoryLevel)));
+    tabRowsAll.forEach((r) => set.add(getCategoryKey(r, categoryLevel)));
     return Array.from(set).sort((a, b) => a.localeCompare(b, "ja"));
-  }, [tabRows, categoryLevel]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabRowsAll, categoryLevel, kidsWalletNames]);
 
   const selectedCategoryData = useMemo(() => {
     if (!selectedCategory) return [];
@@ -472,7 +519,7 @@ export default function GraphPage() {
     const map = new Map<string, number>();
     monthList.forEach((month) => map.set(month, 0));
 
-    rangeRows.forEach((r) => {
+    selectedRangeRows.forEach((r) => {
       if (getCategoryKey(r, categoryLevel) !== selectedCategory) return;
       const month = r.txn_date.slice(0, 7);
       map.set(month, (map.get(month) || 0) + Number(r.amount || 0));
@@ -482,7 +529,8 @@ export default function GraphPage() {
       month,
       amount,
     }));
-  }, [rangeRows, monthList, selectedCategory, categoryLevel]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedRangeRows, monthList, selectedCategory, categoryLevel, kidsWalletNames]);
 
   const selectedCategoryTotal = useMemo(() => {
     return selectedCategoryData.reduce((sum, row) => sum + row.amount, 0);

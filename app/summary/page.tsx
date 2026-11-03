@@ -18,6 +18,11 @@ type Row = {
   | null;
 };
 
+type WalletRow = { id: string; wallet_name: string; wallet_type: string | null };
+const WALLET_HOUSEHOLD = "household";
+const isChildWallet = (w: WalletRow) =>
+  (w.wallet_type || "").toLowerCase() !== "household";
+
 // 収入の費目の判定
 // ・大分類が「定期収入」なら定期収入、それ以外の収入は臨時収入として扱う
 // ・大分類が従来の「収入」の場合は、中分類の名前で判定する
@@ -31,6 +36,9 @@ export default function SummaryPage() {
   const [message, setMessage] = useState("");
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [wallets, setWallets] = useState<WalletRow[]>([]);
+  const [walletFilter, setWalletFilter] = useState(WALLET_HOUSEHOLD);
+  const [walletsReady, setWalletsReady] = useState(false);
 
   useEffect(() => {
     const init = async () => {
@@ -56,10 +64,23 @@ export default function SummaryPage() {
   }, []);
 
   useEffect(() => {
-    if (user) {
+    if (!user) return;
+    const loadWallets = async () => {
+      const { data } = await supabase
+        .from("wallets")
+        .select("id, wallet_name, wallet_type")
+        .order("display_order");
+      setWallets((data as WalletRow[]) || []);
+      setWalletsReady(true);
+    };
+    void loadWallets();
+  }, [user]);
+
+  useEffect(() => {
+    if (user && walletsReady) {
       void loadData();
     }
-  }, [user, month]);
+  }, [user, month, walletFilter, walletsReady]);
 
   const loadData = async () => {
     setMessage("");
@@ -83,7 +104,7 @@ export default function SummaryPage() {
 
     const to = `${nextY}-${String(nextM).padStart(2, "0")}-01`;
 
-    const { data, error } = await supabase
+    let query = supabase
       .from("transaction_records")
       .select(`
         txn_date,
@@ -99,6 +120,20 @@ export default function SummaryPage() {
       .gte("txn_date", from)
       .lt("txn_date", to)
       .order("txn_date", { ascending: true });
+
+    // 財布での絞り込み（初期は家計のみ。子供財布の取引は選んだときだけ表示）
+    const childIds = wallets.filter(isChildWallet).map((w) => w.id);
+    if (walletFilter === WALLET_HOUSEHOLD) {
+      if (childIds.length > 0) {
+      query = query.or(
+        `wallet_id.is.null,wallet_id.not.in.(${childIds.join(",")})`
+      );
+      }
+    } else {
+      query = query.eq("wallet_id", walletFilter);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       setMessage("読込エラー: " + error.message);
@@ -216,6 +251,31 @@ export default function SummaryPage() {
             borderRadius: "8px",
           }}
         />
+      </div>
+
+      <div style={{ marginBottom: "16px" }}>
+        <div style={{ marginBottom: "4px" }}>財布</div>
+        <select
+          value={walletFilter}
+          onChange={(e) => {
+            setWalletFilter(e.target.value);
+          }}
+          style={{
+            width: "100%",
+            padding: "10px",
+            background: "#1f2937",
+            color: "#f9fafb",
+            border: "1px solid #374151",
+            borderRadius: "8px",
+          }}
+        >
+          <option value={WALLET_HOUSEHOLD}>家計</option>
+          {wallets.filter(isChildWallet).map((w) => (
+            <option key={w.id} value={w.id}>
+              {w.wallet_name}
+            </option>
+          ))}
+        </select>
       </div>
 
       <div

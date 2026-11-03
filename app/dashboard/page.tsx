@@ -669,6 +669,14 @@ ${groups}
 `.trim();
 }
 
+// 子供財布（household以外）のIDを取得。dashboardは家計のみを集計するため、これらを除外する
+async function fetchChildWalletIds(): Promise<string[]> {
+  const { data } = await supabase.from("wallets").select("id, wallet_type");
+  return ((data as { id: string; wallet_type: string | null }[]) ?? [])
+    .filter((w) => (w.wallet_type || "").toLowerCase() !== "household")
+    .map((w) => w.id);
+}
+
 export default function DashboardPage() {
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -709,7 +717,9 @@ export default function DashboardPage() {
     const from = `${month}-01`;
     const to = `${nextMonthYm(month)}-01`;
 
-    const { data, error } = await supabase
+    const childWalletIds = await fetchChildWalletIds();
+
+    let query = supabase
       .from("transaction_records")
       .select(`
     id,
@@ -728,6 +738,14 @@ export default function DashboardPage() {
       .gte("txn_date", from)
       .lt("txn_date", to)
       .order("txn_date", { ascending: false });
+
+    if (childWalletIds.length > 0) {
+      query = query.or(
+        `wallet_id.is.null,wallet_id.not.in.(${childWalletIds.join(",")})`
+      );
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       setMessage(error.message);
@@ -833,11 +851,13 @@ ${month}
     const from = `${startMonth}-01`;
     const to = `${nextMonthYm(endMonth)}-01`;
 
+    const childWalletIds = await fetchChildWalletIds();
+
     // 1回の取得は1000件までなので、1000件ずつ全件読む
     const all: Txn[] = [];
 
     for (let offset = 0; ; offset += 1000) {
-      const { data, error } = await supabase
+      let query = supabase
         .from("transaction_records")
         .select(`
     id,
@@ -858,6 +878,14 @@ ${month}
         .order("txn_date", { ascending: true })
         .order("id", { ascending: true })
         .range(offset, offset + 999);
+
+      if (childWalletIds.length > 0) {
+        query = query.or(
+          `wallet_id.is.null,wallet_id.not.in.(${childWalletIds.join(",")})`
+        );
+      }
+
+      const { data, error } = await query;
 
       if (error) {
         setMessage(error.message);
