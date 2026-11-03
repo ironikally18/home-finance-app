@@ -94,14 +94,37 @@ export default function KidsPage() {
 
   const selectedWallet = childWallets.find(w => w.id === walletId) || null;
 
-  const visibleCategories = useMemo(() => {
+  // メイン画面と同じ判定で、収入/支出/資金移動ごとに費目を絞り込む
+  const categoriesFor = (dir: string) => {
     const wt = selectedWallet?.wallet_type;
-    return categories.filter(c =>
-      (c.wallet_type === wt || c.wallet_type === null) &&
-      c.major_category !== "資金移動" &&
-      c.category_kind !== "exclude"
+    const norm = (v: string) => (v || "").normalize("NFKC").trim();
+    const isIncomeMajor = (c: Category) => norm(c.major_category).includes("収入");
+    const walletCats = categories.filter(c => c.wallet_type === wt || c.wallet_type === null);
+    if (dir === "income") {
+      const incomeCats = walletCats.filter(isIncomeMajor);
+      // 収入用の大分類があればそれを表示（対象外も含む）。無ければ資金移動以外を表示
+      if (incomeCats.length > 0) return incomeCats;
+      return walletCats.filter(c => c.major_category !== "資金移動");
+    }
+    if (dir === "transfer") return walletCats.filter(c => c.major_category === "資金移動");
+    return walletCats.filter(c =>
+      !isIncomeMajor(c) && c.major_category !== "資金移動" && c.category_kind !== "exclude"
     );
-  }, [categories, selectedWallet]);
+  };
+
+  const entryCategories = useMemo(
+    () => categoriesFor(direction),
+    [categories, selectedWallet, direction]
+  );
+  const editCategories = useMemo(() => {
+    const list = categoriesFor(editing?.direction || "expense");
+    // 現在の費目が一覧に無い場合も、選択肢として残す（更新時に費目が消えないように）
+    if (editCategoryId && !list.some(c => c.id === editCategoryId)) {
+      const cur = categories.find(c => c.id === editCategoryId);
+      if (cur) return [...list, cur];
+    }
+    return list;
+  }, [categories, selectedWallet, editing, editCategoryId]);
 
   const balance = useMemo(() => transactions.reduce((sum, t) => {
     if (t.direction === "income") return sum + Number(t.amount || 0);
@@ -210,11 +233,14 @@ export default function KidsPage() {
     <main style={{minHeight:"100vh",background:"#0f172a",color:"#f8fafc",padding:"16px",paddingBottom:90,maxWidth:900,margin:"0 auto"}}>
       <header style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,flexWrap:"wrap"}}>
         <h1 style={{fontSize:24,fontWeight:800}}>子供のおこづかい帳</h1>
-        <button style={{...buttonStyle,background:"#475569"}} onClick={()=>supabase.auth.signOut()}>ログアウト</button>
+        <div style={{display:"flex",gap:8}}>
+          <a href="/" style={{...buttonStyle,background:"#0f766e",textDecoration:"none",display:"inline-block"}}>メイン画面へ</a>
+          <button style={{...buttonStyle,background:"#475569"}} onClick={()=>supabase.auth.signOut()}>ログアウト</button>
+        </div>
       </header>
 
       <section style={{display:"grid",gap:12,marginTop:16,background:"#1e293b",padding:14,borderRadius:12}}>
-        <label>子供の財布<select style={inputStyle} value={walletId} onChange={e=>setWalletId(e.target.value)}>
+        <label>子供の財布<select style={inputStyle} value={walletId} onChange={e=>{setWalletId(e.target.value);setCategoryId("");}}>
           {childWallets.length===0 && <option value="">子供用財布がありません</option>}
           {childWallets.map(w=><option key={w.id} value={w.id}>{w.wallet_name}</option>)}
         </select></label>
@@ -233,14 +259,14 @@ export default function KidsPage() {
       {mode==="input" ? (
         <section style={{display:"grid",gap:12,background:"#1e293b",padding:14,borderRadius:12}}>
           <div style={{display:"flex",gap:8}}>
-            <button style={{...buttonStyle,flex:1,background:direction==="income"?"#15803d":"#334155"}} onClick={()=>setDirection("income")}>収入</button>
-            <button style={{...buttonStyle,flex:1,background:direction==="expense"?"#b91c1c":"#334155"}} onClick={()=>setDirection("expense")}>支出</button>
+            <button style={{...buttonStyle,flex:1,background:direction==="income"?"#15803d":"#334155"}} onClick={()=>{setDirection("income");setCategoryId("");}}>収入</button>
+            <button style={{...buttonStyle,flex:1,background:direction==="expense"?"#b91c1c":"#334155"}} onClick={()=>{setDirection("expense");setCategoryId("");}}>支出</button>
           </div>
           <label>日付<input style={inputStyle} type="date" value={date} onChange={e=>setDate(e.target.value)}/></label>
           <label>金額<input style={inputStyle} type="number" min="1" inputMode="numeric" value={amount} onChange={e=>setAmount(e.target.value)} placeholder="金額"/></label>
           <label>費目<select style={inputStyle} value={categoryId} onChange={e=>setCategoryId(e.target.value)}>
             <option value="">費目なし</option>
-            {visibleCategories.map(c=><option key={c.id} value={c.id}>{c.major_category} / {c.minor_category}</option>)}
+            {entryCategories.map(c=><option key={c.id} value={c.id}>{c.major_category} / {c.minor_category}</option>)}
           </select></label>
           <label>支払先・もらった相手<input style={inputStyle} value={merchant} onChange={e=>setMerchant(e.target.value)} placeholder="任意"/></label>
           <label>メモ<input style={inputStyle} value={memo} onChange={e=>setMemo(e.target.value)} placeholder="任意"/></label>
@@ -278,7 +304,7 @@ export default function KidsPage() {
           <label>日付<input style={inputStyle} type="date" value={editDate} onChange={e=>setEditDate(e.target.value)}/></label>
           <label>金額<input style={inputStyle} type="number" min="1" value={editAmount} onChange={e=>setEditAmount(e.target.value)}/></label>
           <label>費目<select style={inputStyle} value={editCategoryId} onChange={e=>setEditCategoryId(e.target.value)}>
-            <option value="">費目なし</option>{visibleCategories.map(c=><option key={c.id} value={c.id}>{c.major_category} / {c.minor_category}</option>)}
+            <option value="">費目なし</option>{editCategories.map(c=><option key={c.id} value={c.id}>{c.major_category} / {c.minor_category}</option>)}
           </select></label>
           <label>相手・支払先<input style={inputStyle} value={editMerchant} onChange={e=>setEditMerchant(e.target.value)}/></label>
           <label>メモ<input style={inputStyle} value={editMemo} onChange={e=>setEditMemo(e.target.value)}/></label>
