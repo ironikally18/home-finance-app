@@ -69,6 +69,10 @@ const PAGE_SIZE = 1000;
 const DIRECTION_EXPENSE = "expense";
 const DIRECTION_INCOME = "income";
 const DIRECTION_TRANSFER = "transfer";
+// 検索・集計の「差額」（収入−支出）。取引の direction ではなく、区分の選択肢としてだけ使う
+const DIRECTION_BALANCE = "balance";
+
+type WalletScope = "household" | "kids" | "all";
 
 type Tab = "expense" | "income";
 type CategoryLevel = "major" | "minor";
@@ -878,7 +882,12 @@ export default function GraphPage() {
       )}
 
       {/* 条件を指定して検索・集計 */}
-      <SearchSection rows={rows} monthList={monthList} chartWidth={chartWidth} />
+      <SearchSection
+        rows={allRows}
+        kidsWalletNames={kidsWalletNames}
+        monthList={monthList}
+        chartWidth={chartWidth}
+      />
 
       <BottomNav />
     </div>
@@ -994,16 +1003,20 @@ function matchesCondition(
 
 function SearchSection({
   rows,
+  kidsWalletNames,
   monthList,
   chartWidth,
 }: {
   rows: Row[];
+  kidsWalletNames: Record<string, string>;
   monthList: string[];
   chartWidth: number;
 }) {
   const [categories, setCategories] = useState<Category[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [direction, setDirection] = useState<string>(DIRECTION_EXPENSE);
+  // 財布の範囲。初期は家計のみ（子供財布は選んだときだけ集計に含める）
+  const [walletScope, setWalletScope] = useState<WalletScope>("household");
   const [chartType, setChartType] = useState<"bar" | "line">("bar");
   const [conditions, setConditions] = useState<SearchCondition[]>(() => [
     newSearchCondition(),
@@ -1044,9 +1057,56 @@ function SearchSection({
     [categories]
   );
 
+  const isBalance = direction === DIRECTION_BALANCE;
+
+  const scopedRows = useMemo(
+    () =>
+      rows.filter((r) => {
+        const isKid = !!(r.wallet_id && kidsWalletNames[r.wallet_id]);
+        if (walletScope === "all") return true;
+        return walletScope === "kids" ? isKid : !isKid;
+      }),
+    [rows, kidsWalletNames, walletScope]
+  );
+
   const series = useMemo<SearchSeries[]>(() => {
     const indexOf = new Map(monthList.map((m, i) => [m, i]));
-    const base = rows.filter((r) => r.direction === direction);
+
+    // 差額（収入−支出）：財布と期間だけで計算し、項目などの条件は使わない
+    if (isBalance) {
+      const monthly = monthList.map(() => 0);
+      const matched: Row[] = [];
+      let total = 0;
+
+      scopedRows.forEach((r) => {
+        if (r.direction !== DIRECTION_INCOME && r.direction !== DIRECTION_EXPENSE) return;
+
+        const idx = indexOf.get(r.txn_date.slice(0, 7));
+
+        if (idx === undefined) return;
+
+        const amount =
+          (r.direction === DIRECTION_INCOME ? 1 : -1) * Number(r.amount || 0);
+
+        monthly[idx] += amount;
+        total += amount;
+        matched.push(r);
+      });
+
+      return [
+        {
+          id: "balance",
+          label: "差額（収入−支出）",
+          color: COLORS[0],
+          monthly,
+          count: matched.length,
+          total,
+          rows: matched,
+        },
+      ];
+    }
+
+    const base = scopedRows.filter((r) => r.direction === direction);
 
     return conditions.map((c, i) => {
       const monthly = monthList.map(() => 0);
@@ -1076,7 +1136,7 @@ function SearchSection({
         rows: matched,
       };
     });
-  }, [rows, monthList, direction, conditions, accMap]);
+  }, [scopedRows, monthList, direction, isBalance, conditions, accMap]);
 
   const chartData = useMemo(
     () =>
@@ -1091,8 +1151,9 @@ function SearchSection({
   );
 
   const detail = series.find((s) => s.id === detailId) ?? series[0];
-  const dirLabel =
-    direction === DIRECTION_INCOME
+  const dirLabel = isBalance
+    ? "差額"
+    : direction === DIRECTION_INCOME
       ? "収入"
       : direction === DIRECTION_TRANSFER
         ? "資金移動"
@@ -1122,26 +1183,54 @@ function SearchSection({
       <SectionTitle title="条件を指定して検索・集計" />
 
       <div style={{ fontSize: "13px", color: "#9ca3af", marginBottom: "8px" }}>
-        大分類・中分類・支払先・支払元・メモで絞り込んで、月別の合計をグラフにします。
-        期間は上の「表示期間」に従います。複数の検索を並べて比較できます。
+        区分（支出・収入・差額・資金移動）と財布（家計・子供・すべて）を選び、大分類・中分類・支払先・支払元・メモで絞り込んで、月別の合計をグラフにします。
+        期間は上の「表示期間」に従います。複数の検索を並べて比較できます（差額は財布と期間だけで計算し、項目などの条件は使いません）。
         入力した条件はすべて満たす明細を集計します（AND）。スペースで区切ると、すべての語を含む明細に絞ります。
         大文字・小文字と全角・半角は区別しません。
       </div>
 
-      <div style={searchCardStyle}>
-        <div style={{ marginBottom: "4px" }}>区分</div>
-        <select
-          value={direction}
-          onChange={(e) => setDirection(e.target.value)}
-          style={selectStyle}
-        >
-          <option value={DIRECTION_EXPENSE}>支出</option>
-          <option value={DIRECTION_INCOME}>収入</option>
-          <option value={DIRECTION_TRANSFER}>資金移動</option>
-        </select>
+      <div
+        style={{
+          ...searchCardStyle,
+          display: "grid",
+          gap: "10px",
+          gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+        }}
+      >
+        <div>
+          <div style={{ marginBottom: "4px" }}>区分</div>
+          <select
+            value={direction}
+            onChange={(e) => setDirection(e.target.value)}
+            style={selectStyle}
+          >
+            <option value={DIRECTION_EXPENSE}>支出</option>
+            <option value={DIRECTION_INCOME}>収入</option>
+            <option value={DIRECTION_BALANCE}>差額（収入−支出）</option>
+            <option value={DIRECTION_TRANSFER}>資金移動</option>
+          </select>
+        </div>
+        <div>
+          <div style={{ marginBottom: "4px" }}>財布</div>
+          <select
+            value={walletScope}
+            onChange={(e) => setWalletScope(e.target.value as WalletScope)}
+            style={selectStyle}
+          >
+            <option value="household">家計</option>
+            <option value="kids">子供</option>
+            <option value="all">すべて</option>
+          </select>
+        </div>
       </div>
 
-      {conditions.map((c, i) => {
+      {isBalance && (
+        <div style={{ fontSize: "13px", color: "#9ca3af", marginBottom: "12px" }}>
+          差額は選んだ財布と期間だけで計算します（項目・支払先などの条件は使いません）。
+        </div>
+      )}
+
+      {!isBalance && conditions.map((c, i) => {
         const minors = categories
           .filter((x) => x.major_category === c.major)
           .map((x) => x.minor_category);
@@ -1277,7 +1366,7 @@ function SearchSection({
       })}
 
       <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "12px" }}>
-        {conditions.length < MAX_SERIES && (
+        {!isBalance && conditions.length < MAX_SERIES && (
           <button
             type="button"
             onClick={() =>
@@ -1400,7 +1489,7 @@ function SearchSection({
                 <span style={{ color: s.color }}>■</span> 検索{i + 1}：{s.label}
               </div>
               <div style={{ fontSize: "14px", marginTop: "4px", color: "#d1d5db" }}>
-                合計 {s.total.toLocaleString()}円 / {s.count}件 / 月平均{" "}
+                合計 {isBalance ? formatSigned(s.total) : `${s.total.toLocaleString()}円`} / {s.count}件 / 月平均{" "}
                 {Math.round(
                   monthList.length > 0 ? s.total / monthList.length : 0
                 ).toLocaleString()}
@@ -1430,7 +1519,7 @@ function SearchSection({
                 <td style={{ textAlign: "left", padding: "4px 8px" }}>{m}</td>
                 {series.map((s) => (
                   <td key={s.id} style={{ padding: "4px 8px" }}>
-                    {s.monthly[mi] > 0
+                    {s.monthly[mi] !== 0
                       ? `${s.monthly[mi].toLocaleString()}円`
                       : "-"}
                   </td>
@@ -1493,9 +1582,30 @@ function SearchSection({
                 >
                   <div style={{ display: "flex", justifyContent: "space-between" }}>
                     <span>{r.txn_date}</span>
-                    <b>{Number(r.amount).toLocaleString()}円</b>
+                    <b
+                      style={
+                        isBalance
+                          ? {
+                              color:
+                                r.direction === DIRECTION_INCOME
+                                  ? "#86efac"
+                                  : "#fca5a5",
+                            }
+                          : undefined
+                      }
+                    >
+                      {isBalance
+                        ? r.direction === DIRECTION_INCOME
+                          ? "+"
+                          : "-"
+                        : ""}
+                      {Number(r.amount).toLocaleString()}円
+                    </b>
                   </div>
                   <div style={{ color: "#d1d5db" }}>
+                    {r.wallet_id && kidsWalletNames[r.wallet_id]
+                      ? `【${kidsWalletNames[r.wallet_id]}】 `
+                      : ""}
                     {major || minor ? `${major} / ${minor}` : "（費目なし）"}
                     {r.merchant_name ? ` ・ ${r.merchant_name}` : ""}
                     {accName ? ` ・ ${accName}` : ""}
