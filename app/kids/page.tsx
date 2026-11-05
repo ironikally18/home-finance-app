@@ -98,7 +98,9 @@ export default function KidsPage() {
   const categoriesFor = (dir: string) => {
     const wt = selectedWallet?.wallet_type;
     const norm = (v: string) => (v || "").normalize("NFKC").trim();
-    const isIncomeMajor = (c: Category) => norm(c.major_category).includes("収入");
+    // 「収入」を含む大分類、または子供財布の「受け取った」を収入扱いにする
+    const isIncomeMajor = (c: Category) =>
+      ["収入", "受け取った"].some((w) => norm(c.major_category).includes(w));
     const walletCats = categories.filter(c => c.wallet_type === wt || c.wallet_type === null);
     if (dir === "income") {
       const incomeCats = walletCats.filter(isIncomeMajor);

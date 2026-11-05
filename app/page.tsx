@@ -230,6 +230,13 @@ function parseImportAmount(raw: string): number | null {
   return n;
 }
 
+// 収入として扱う大分類の判定。「収入」を含む名前に加えて、子供財布（allowance）の「受け取った」も収入扱い
+const INCOME_MAJOR_KEYWORDS = ["収入", "受け取った"];
+const isIncomeMajorName = (v: string | null | undefined) => {
+  const m = (v || "").normalize("NFKC").trim();
+  return INCOME_MAJOR_KEYWORDS.some((k) => m.includes(k));
+};
+
 function parseImportDirection(
   raw: string
 ): "expense" | "income" | "transfer" | null {
@@ -598,29 +605,16 @@ export default function Page() {
       const walletOk = c.wallet_type === walletType || c.wallet_type === null;
 
       if (entryDirection === "income") {
-        // 収入用の大分類が登録されていればそれを表示する。
-        // 既存マスタで「給与」「臨時収入」など別の大分類名を使っている場合も
-        // 費目が空にならないよう、資金移動以外の費目を表示対象にする。
-        const major = (c.major_category || "").normalize("NFKC").trim();
+        // 収入用の大分類（「収入」を含む名前、または「受け取った」）が登録されていればそれを表示する。
+        // 1件も無い財布では、費目が空にならないよう資金移動・対象外以外を表示する。
         const incomeCategories = categories.filter((item) => {
           const itemWalletOk =
             item.wallet_type === walletType || item.wallet_type === null;
-          const itemMajor = (item.major_category || "").normalize("NFKC").trim();
-          return (
-            itemWalletOk &&
-            (itemMajor === "収入" ||
-              itemMajor === "おこづかい収入" ||
-              itemMajor.includes("収入"))
-          );
+          return itemWalletOk && isIncomeMajorName(item.major_category);
         });
 
         if (incomeCategories.length > 0) {
-          return (
-            walletOk &&
-            (major === "収入" ||
-              major === "おこづかい収入" ||
-              major.includes("収入"))
-          );
+          return walletOk && isIncomeMajorName(c.major_category);
         }
 
         return walletOk && c.major_category !== "資金移動" && c.category_kind !== "exclude";
@@ -632,8 +626,7 @@ export default function Page() {
 
       return (
         walletOk &&
-        c.major_category !== "収入" &&
-        c.major_category !== "おこづかい収入" &&
+        !isIncomeMajorName(c.major_category) &&
         c.major_category !== "資金移動" &&
         c.category_kind !== "exclude"
       );
