@@ -593,10 +593,33 @@ export default function Page() {
   }, [walletId, wallets]);
 
 
+  // 家計共通の口座（household の財布に登録された口座）。
+  // 子供財布の収入の入金先・支出の支払元（資金移動を除く）でも選べるようにする
+  const householdWalletIds = useMemo(
+    () =>
+      wallets
+        .filter((w) => (w.wallet_type || "").toLowerCase() === "household")
+        .map((w) => w.id),
+    [wallets]
+  );
+
   const filteredAccounts = useMemo(() => {
     if (!walletId) return accounts;
-    return accounts.filter((a) => a.wallet_id === walletId);
-  }, [accounts, walletId]);
+
+    const own = accounts.filter((a) => a.wallet_id === walletId);
+    const isHouseholdWallet = householdWalletIds.includes(walletId);
+
+    if (isHouseholdWallet || entryDirection === "transfer") return own;
+
+    const shared = accounts.filter(
+      (a) =>
+        a.wallet_id !== walletId &&
+        (a.wallet_id === null || householdWalletIds.includes(a.wallet_id))
+    );
+
+    // その財布の口座を先に、家計共通の口座を後ろに並べる
+    return [...own, ...shared];
+  }, [accounts, walletId, householdWalletIds, entryDirection]);
 
   const filteredCategories = useMemo(() => {
     const walletType = selectedWallet?.wallet_type || "household";
@@ -1956,6 +1979,7 @@ export default function Page() {
               {filteredAccounts.map((a) => (
                 <option key={a.id} value={a.id}>
                   {a.account_name}
+                  {walletId && a.wallet_id !== walletId ? "（家計共通）" : ""}
                 </option>
               ))}
             </select>
