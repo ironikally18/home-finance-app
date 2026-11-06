@@ -155,6 +155,8 @@ export default function GraphPage() {
   // 子供財布（household以外）の id → 財布名
   const [kidsWalletNames, setKidsWalletNames] = useState<Record<string, string>>({});
   const [accounts, setAccounts] = useState<Account[]>([]);
+  // 項目管理で登録した費目（大分類・中分類の候補に使う。取引が無い費目も選べるようにする）
+  const [categoryMaster, setCategoryMaster] = useState<CategoryMaster[]>([]);
   const [message, setMessage] = useState("");
 
   // ---- 条件（画面上部に集約）----
@@ -202,6 +204,16 @@ export default function GraphPage() {
         return;
       }
       setAccounts((data as Account[]) || []);
+
+      const { data: catData, error: catError } = await supabase
+        .from("categories")
+        .select("wallet_type, major_category, minor_category, category_kind, display_order")
+        .order("display_order");
+      if (catError) {
+        setMessage("費目マスタの読込エラー: " + catError.message);
+        return;
+      }
+      setCategoryMaster((catData as CategoryMaster[]) || []);
     };
     void loadAccounts();
   }, [user]);
@@ -448,28 +460,69 @@ export default function GraphPage() {
   );
 
   // 大分類・中分類の候補（選んだ区分・財布の全期間のデータから作る）
+  // 項目管理（マスタ）の費目のうち、選んだ区分・財布に当てはまるもの。
+  // 入力画面と同じ考え方：収入は「収入」を含む／「受け取った」の大分類、支出はそれ以外（資金移動・対象外を除く）
+  const masterCategories = useMemo(() => {
+    if (isBalance) return [];
+    return categoryMaster.filter((c) => {
+      const wt = (c.wallet_type || "").toLowerCase();
+      const walletOk =
+        walletScope === "all"
+          ? true
+          : walletScope === "household"
+            ? wt === "" || wt === "household"
+            : wt !== "" && wt !== "household";
+      if (!walletOk) return false;
+
+      if (direction === "income") return isIncomeMajorName(c.major_category);
+      return (
+        !isIncomeMajorName(c.major_category) &&
+        c.major_category !== "資金移動" &&
+        c.category_kind !== "exclude"
+      );
+    });
+  }, [categoryMaster, isBalance, walletScope, direction]);
+
+  // 候補は「マスタの費目（登録順）」＋「取引データにだけある費目」
   const majorOptions = useMemo(() => {
     if (isBalance) return [];
     const set = new Set<string>();
+    masterCategories.forEach((c) => {
+      const m = (c.major_category || "").trim();
+      if (m) set.add(m);
+    });
+    const dataOnly = new Set<string>();
     scopedRows.forEach((r) => {
       if (r.direction !== direction) return;
       const c = rowCategory(r);
-      if (c.major) set.add(c.major);
+      if (c.major && !set.has(c.major)) dataOnly.add(c.major);
     });
-    return Array.from(set).sort((a, b) => a.localeCompare(b, "ja"));
-  }, [scopedRows, isBalance, direction]);
+    return [
+      ...Array.from(set),
+      ...Array.from(dataOnly).sort((a, b) => a.localeCompare(b, "ja")),
+    ];
+  }, [masterCategories, scopedRows, isBalance, direction]);
 
   const minorOptions = useMemo(() => {
     if (isBalance) return [];
     const set = new Set<string>();
+    masterCategories.forEach((c) => {
+      if (major && (c.major_category || "").trim() !== major) return;
+      const m = (c.minor_category || "").trim();
+      if (m) set.add(m);
+    });
+    const dataOnly = new Set<string>();
     scopedRows.forEach((r) => {
       if (r.direction !== direction) return;
       const c = rowCategory(r);
       if (major && c.major !== major) return;
-      if (c.minor) set.add(c.minor);
+      if (c.minor && !set.has(c.minor)) dataOnly.add(c.minor);
     });
-    return Array.from(set).sort((a, b) => a.localeCompare(b, "ja"));
-  }, [scopedRows, isBalance, direction, major]);
+    return [
+      ...Array.from(set),
+      ...Array.from(dataOnly).sort((a, b) => a.localeCompare(b, "ja")),
+    ];
+  }, [masterCategories, scopedRows, isBalance, direction, major]);
 
   // 月ごとの収入・支出・グラフ1の値
   const monthly = useMemo(() => {
@@ -1056,6 +1109,19 @@ export default function GraphPage() {
 
 // ===================== 検索条件のヘルパー =====================
 type Account = { id: string; account_name: string };
+type CategoryMaster = {
+  wallet_type: string | null;
+  major_category: string;
+  minor_category: string;
+  category_kind: string | null;
+  display_order: number | null;
+};
+
+// 収入として扱う大分類の判定（入力画面と同じ）。「収入」を含む名前、または子供財布の「受け取った」
+const isIncomeMajorName = (v: string | null | undefined) => {
+  const m = (v || "").normalize("NFKC").trim();
+  return ["収入", "受け取った"].some((k) => m.includes(k));
+};
 
 // 1本の検索条件。入力した項目はすべて満たす明細を集計する（AND）
 type SearchCondition = {
