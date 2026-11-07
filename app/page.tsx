@@ -359,6 +359,8 @@ export default function Page() {
     return toLocalDateString(new Date(now.getFullYear(), now.getMonth(), 1));
   });
   const [csvTo, setCsvTo] = useState(() => toLocalDateString(new Date()));
+  // CSV出力の財布。"" はすべての財布、"household" は家計のみ、それ以外は財布のID
+  const [csvWalletId, setCsvWalletId] = useState("");
   const [csvExporting, setCsvExporting] = useState(false);
   const [csvMessage, setCsvMessage] = useState("");
 
@@ -1257,14 +1259,14 @@ export default function Page() {
         .gte("txn_date", csvFrom)
         .lte("txn_date", csvTo);
 
-      if (listWalletId === "household") {
+      if (csvWalletId === "household") {
         if (childWalletIds.length > 0) {
           query = query.or(
             `wallet_id.is.null,wallet_id.not.in.(${childWalletIds.join(",")})`
           );
         }
-      } else if (listWalletId) {
-        query = query.eq("wallet_id", listWalletId);
+      } else if (csvWalletId) {
+        query = query.eq("wallet_id", csvWalletId);
       }
 
       const { data, error } = await query
@@ -1316,7 +1318,16 @@ export default function Page() {
       ];
     });
 
-    downloadCsv(`transactions_${csvFrom}_${csvTo}.csv`, [header, ...lines]);
+    // 財布を絞ったときは、ファイル名に財布名を付ける
+    const walletNameForFile =
+      csvWalletId === "household"
+        ? "household"
+        : csvWalletId
+          ? wallets.find((w) => w.id === csvWalletId)?.wallet_name ?? ""
+          : "";
+    const fileSuffix = walletNameForFile ? `_${walletNameForFile}` : "";
+
+    downloadCsv(`transactions_${csvFrom}_${csvTo}${fileSuffix}.csv`, [header, ...lines]);
     setCsvMessage(`${all.length}件をCSV出力しました`);
     setCsvExporting(false);
   };
@@ -2513,14 +2524,28 @@ export default function Page() {
                 </div>
               </div>
 
+              <div>
+                <div style={{ marginBottom: "4px" }}>財布</div>
+                <select
+                  value={csvWalletId}
+                  onChange={(e) => setCsvWalletId(e.target.value)}
+                  style={{ width: "100%", padding: "8px" }}
+                >
+                  <option value="">すべての財布（家計＋子供）</option>
+                  <option value="household">家計のみ</option>
+                  {wallets
+                    .filter((w) => !householdWalletIds.includes(w.id))
+                    .map((w) => (
+                      <option key={w.id} value={w.id}>
+                        {w.wallet_name}
+                      </option>
+                    ))}
+                </select>
+              </div>
+
               <div style={{ fontSize: "12px", color: "#9ca3af" }}>
-                上の「財布」の選択が反映されます（現在:{" "}
-                {listWalletId === "household"
-                  ? "家計のみ"
-                  : listWalletId
-                    ? wallets.find((w) => w.id === listWalletId)?.wallet_name ?? "-"
-                    : "すべての財布"}
-                ）。画面の月とは別に期間を指定できます。
+                画面の月・一覧の財布の選択とは別に、ここで財布と期間を指定できます。
+                出力したCSVには「財布」列が入ります。
               </div>
 
               <div
