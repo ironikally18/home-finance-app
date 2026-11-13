@@ -438,16 +438,14 @@ export default function GraphPage() {
     [major, minor, merchant, account, memo, free]
   );
 
-  // 区分と条件に合う取引。差額は財布と期間だけで計算し、項目などの条件は使わない
+  // 区分と条件に合う取引。差額は、条件に合う収入と支出の両方を対象にする（収入−支出）
   const matchedRows = useMemo(() => {
-    if (isBalance) {
-      return scopedRows.filter(
-        (r) => r.direction === DIRECTION_INCOME || r.direction === DIRECTION_EXPENSE
-      );
-    }
-    return scopedRows.filter(
-      (r) => r.direction === direction && matchesCondition(r, cond, accMap)
-    );
+    return scopedRows.filter((r) => {
+      const dirOk = isBalance
+        ? r.direction === DIRECTION_INCOME || r.direction === DIRECTION_EXPENSE
+        : r.direction === direction;
+      return dirOk && matchesCondition(r, cond, accMap);
+    });
   }, [scopedRows, isBalance, direction, cond, accMap]);
 
   const rangeRows = useMemo(
@@ -462,8 +460,8 @@ export default function GraphPage() {
   // 大分類・中分類の候補（選んだ区分・財布の全期間のデータから作る）
   // 項目管理（マスタ）の費目のうち、選んだ区分・財布に当てはまるもの。
   // 入力画面と同じ考え方：収入は「収入」を含む／「受け取った」の大分類、支出はそれ以外（資金移動・対象外を除く）
+  // 差額のときは、収入と支出の両方の費目を候補にする
   const masterCategories = useMemo(() => {
-    if (isBalance) return [];
     return categoryMaster.filter((c) => {
       const wt = (c.wallet_type || "").toLowerCase();
       const walletOk =
@@ -474,18 +472,21 @@ export default function GraphPage() {
             : wt !== "" && wt !== "household";
       if (!walletOk) return false;
 
-      if (direction === "income") return isIncomeMajorName(c.major_category);
+      const isIncomeCat = isIncomeMajorName(c.major_category);
+      const incomeOk = direction === "income" || direction === "balance";
+      const expenseOk = direction === "expense" || direction === "balance";
+
+      if (isIncomeCat) return incomeOk;
       return (
-        !isIncomeMajorName(c.major_category) &&
+        expenseOk &&
         c.major_category !== "資金移動" &&
         c.category_kind !== "exclude"
       );
     });
-  }, [categoryMaster, isBalance, walletScope, direction]);
+  }, [categoryMaster, walletScope, direction]);
 
   // 候補は「マスタの費目（登録順）」＋「取引データにだけある費目」
   const majorOptions = useMemo(() => {
-    if (isBalance) return [];
     const set = new Set<string>();
     masterCategories.forEach((c) => {
       const m = (c.major_category || "").trim();
@@ -493,7 +494,10 @@ export default function GraphPage() {
     });
     const dataOnly = new Set<string>();
     scopedRows.forEach((r) => {
-      if (r.direction !== direction) return;
+      const dirOk = isBalance
+        ? r.direction === DIRECTION_INCOME || r.direction === DIRECTION_EXPENSE
+        : r.direction === direction;
+      if (!dirOk) return;
       const c = rowCategory(r);
       if (c.major && !set.has(c.major)) dataOnly.add(c.major);
     });
@@ -504,7 +508,6 @@ export default function GraphPage() {
   }, [masterCategories, scopedRows, isBalance, direction]);
 
   const minorOptions = useMemo(() => {
-    if (isBalance) return [];
     const set = new Set<string>();
     masterCategories.forEach((c) => {
       if (major && (c.major_category || "").trim() !== major) return;
@@ -513,7 +516,10 @@ export default function GraphPage() {
     });
     const dataOnly = new Set<string>();
     scopedRows.forEach((r) => {
-      if (r.direction !== direction) return;
+      const dirOk = isBalance
+        ? r.direction === DIRECTION_INCOME || r.direction === DIRECTION_EXPENSE
+        : r.direction === direction;
+      if (!dirOk) return;
       const c = rowCategory(r);
       if (major && c.major !== major) return;
       if (c.minor && !set.has(c.minor)) dataOnly.add(c.minor);
@@ -633,7 +639,7 @@ export default function GraphPage() {
   const stackAxis = buildYAxis(breakdown ? stackedExtents(breakdown.data) : []);
   const balanceBreakdownAxis = buildYAxis(monthly.flatMap((d) => [d.income, d.expense]));
 
-  const conditionText = isBalance ? "" : conditionLabel(cond);
+  const conditionText = conditionLabel(cond);
   const hasDetailFilter = !!(merchant || account || memo || free);
 
   const tooltipStyle = { background: "#1f2937", border: "1px solid #374151", color: "#f9fafb" };
@@ -732,12 +738,13 @@ export default function GraphPage() {
           </div>
         </div>
 
-        {isBalance ? (
-          <div style={{ fontSize: "13px", color: "#9ca3af" }}>
-            差額は選んだ財布と期間だけで計算します（項目・支払先などの条件は使いません）。
-          </div>
-        ) : (
+        {(
           <>
+            {isBalance && (
+              <div style={{ fontSize: "13px", color: "#9ca3af" }}>
+                差額でも条件を使えます。条件に当てはまる収入を足し、当てはまる支出を引いて計算します。
+              </div>
+            )}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
               <div>
                 <div style={fieldLabelStyle}>大分類</div>
