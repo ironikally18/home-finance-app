@@ -336,6 +336,7 @@ export default function Page() {
   const [editAmount, setEditAmount] = useState("");
   const [editCategoryId, setEditCategoryId] = useState("");
   const [editAccountId, setEditAccountId] = useState("");
+  const [editWalletId, setEditWalletId] = useState("");
   const [editMerchantName, setEditMerchantName] = useState("");
   const [editMemo, setEditMemo] = useState("");
   const [editDirection, setEditDirection] =
@@ -926,6 +927,7 @@ export default function Page() {
     setEditDate(t.txn_date || "");
     setEditAmount(String(t.amount ?? ""));
     setEditCategoryId(t.category_id || "");
+    setEditWalletId(t.wallet_id || "");
     // 収入は入金先（receive_account_id）。以前に支払元の列へ入れた収入も読めるようにする
     setEditAccountId(
       (t.direction === "income"
@@ -957,6 +959,8 @@ export default function Page() {
         posting_date: editDate,
         amount: Number(editAmount),
         category_id: editCategoryId || null,
+        // 財布列を表示している（すべての財布）ときだけ財布も更新する
+        ...(showWalletColumn ? { wallet_id: editWalletId || null } : {}),
         // 収入は入金先（receive_account_id）、それ以外は支払元（payment_account_id）に保存する
         payment_account_id:
           editDirection === "income" ? null : editAccountId || null,
@@ -985,6 +989,7 @@ export default function Page() {
     setEditAmount("");
     setEditCategoryId("");
     setEditAccountId("");
+    setEditWalletId("");
     setEditMerchantName("");
     setEditMemo("");
   };
@@ -1195,6 +1200,13 @@ export default function Page() {
     setEditMerchantMasterName("");
     await loadData();
   };
+
+  // 「すべての財布」選択時のみ、一覧に財布列を表示する
+  const showWalletColumn = listWalletId === "";
+
+  const rowWalletName = (t: TransactionListRow) =>
+    (t.wallet_id ? wallets.find((w) => w.id === t.wallet_id)?.wallet_name : "") ||
+    "";
 
   // 一覧・CSVの「支払元」列に出す口座名。支出は支払元、収入は入金先
   const rowAccountName = (t: TransactionListRow) => {
@@ -2237,7 +2249,7 @@ export default function Page() {
                 style={{
                   borderCollapse: "collapse",
                   width: "100%",
-                  minWidth: "980px",
+                  minWidth: showWalletColumn ? "1080px" : "980px",
                   background: "#111827",
                   color: "#f9fafb",
                 }}
@@ -2245,6 +2257,7 @@ export default function Page() {
                 <thead>
                   <tr style={{ background: "#1f2937" }}>
                     <th style={th}>日付</th>
+                    {showWalletColumn && <th style={th}>財布</th>}
                     <th style={th}>区分</th>
                     <th style={th}>金額</th>
                     <th style={th}>費目</th>
@@ -2279,6 +2292,27 @@ export default function Page() {
                             t.txn_date
                           )}
                         </td>
+
+                        {showWalletColumn && (
+                          <td style={td}>
+                            {isEditing ? (
+                              <select
+                                value={editWalletId}
+                                onChange={(e) => setEditWalletId(e.target.value)}
+                                style={{ width: "120px", padding: "6px" }}
+                              >
+                                <option value="">未設定</option>
+                                {wallets.map((w) => (
+                                  <option key={w.id} value={w.id}>
+                                    {w.wallet_name}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              rowWalletName(t) || "-"
+                            )}
+                          </td>
+                        )}
 
                         <td style={td}>
                           {isEditing ? (
