@@ -237,6 +237,7 @@ export default function KidsPage() {
         <h1 style={{fontSize:24,fontWeight:800}}>子供のおこづかい帳</h1>
         <div style={{display:"flex",gap:8}}>
           <a href="/" style={{...buttonStyle,background:"#0f766e",textDecoration:"none",display:"inline-block"}}>メイン画面へ</a>
+          <a href="/kids/report" style={{...buttonStyle,background:"#7c3aed",textDecoration:"none",display:"inline-block"}}>レポート</a>
           <button style={{...buttonStyle,background:"#475569"}} onClick={()=>supabase.auth.signOut()}>ログアウト</button>
         </div>
       </header>
