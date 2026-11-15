@@ -2917,6 +2917,7 @@ export default function Page() {
 
           <SortableAccountList
             accounts={accounts}
+            wallets={wallets}
             editingAccountId={editingAccountId}
             editAccountName={editAccountName}
             editAccountType={editAccountType}
@@ -3050,11 +3051,12 @@ function SortableItem({ id, children }: { id: string; children: React.ReactNode 
 }
 
 function SortableAccountList({
-  accounts, editingAccountId, editAccountName, editAccountType,
+  accounts, wallets, editingAccountId, editAccountName, editAccountType,
   setEditAccountName, setEditAccountType,
   onSave, onCancel, onEdit, onDelete, onReorder,
 }: {
   accounts: AccountRow[];
+  wallets: WalletRow[];
   editingAccountId: string | null;
   editAccountName: string;
   editAccountType: string;
@@ -3069,6 +3071,10 @@ function SortableAccountList({
   const [local, setLocal] = useState(accounts);
   useEffect(() => { setLocal(accounts); }, [accounts]);
   const sensors = useSensors(useSensor(PointerSensor), useSensor(TouchSensor));
+
+  const walletLabel = (a: AccountRow) =>
+    (a.wallet_id ? wallets.find((w) => w.id === a.wallet_id)?.wallet_name : "") ||
+    "財布未設定";
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
@@ -3095,6 +3101,7 @@ function SortableAccountList({
                     <div style={{ fontSize: "14px", flex: 1 }}>
                       {isEditing ? (
                         <div style={{ display: "grid", gap: "6px" }}>
+                          <div style={{ fontSize: "12px", color: "#888" }}>財布: {walletLabel(a)}</div>
                           <input value={editAccountName} onChange={(e) => setEditAccountName(e.target.value)} style={{ width: "100%", padding: "6px" }} />
                           <select value={editAccountType} onChange={(e) => setEditAccountType(e.target.value)} style={{ width: "100%", padding: "6px" }}>
                             <option value="cash">cash</option>
@@ -3104,7 +3111,7 @@ function SortableAccountList({
                             <option value="prepaid">prepaid</option>
                           </select>
                         </div>
-                      ) : `${a.account_name} (${a.account_type})`}
+                      ) : `[${walletLabel(a)}] ${a.account_name} (${a.account_type})`}
                     </div>
                     <div style={{ display: "flex", gap: "6px" }}>
                       {isEditing ? (
