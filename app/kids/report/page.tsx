@@ -2,7 +2,8 @@
 
 // kids 概算レポート（妻のみ閲覧）
 // 配置先: app/kids/report/page.tsx
-// 事前に kids_report_setup.sql を Supabase で実行し、妻のアカウントを閲覧者に追加してください。
+// 事前に kids_report_setup.sql と kids_household_keyword.sql を Supabase で実行し、妻のアカウントを閲覧者に追加してください。
+// 家計共通の財布から出した「かのん用」の支出は、メモの前方一致キーワード（ルールの対象＝家計共通）で拾います。
 
 import { useEffect, useMemo, useState } from "react";
 import { createClient, User } from "@supabase/supabase-js";
@@ -33,6 +34,8 @@ type Rule = {
   minor_category: string | null;
   item_name: string;
   display_order: number;
+  source?: "wallet" | "household" | null; // wallet=この財布の取引 / household=家計共通の財布の取引（メモのキーワードで拾う）
+  include_in_balance?: boolean | null; // household のとき、概算残高に含めるか
 };
 type Unmatched = { minor: string; memo: string; count: number; total: number };
 type Valuation = {
@@ -53,6 +56,7 @@ type ReportRow = {
   expense: number;
   valued: boolean;
   order: number;
+  household?: boolean; // 家計共通の財布から出した分
 };
 type TabKey = "table" | "rules" | "valuations";
 
@@ -98,6 +102,9 @@ const toNum = (v: string): number | null => {
   return Number.isFinite(n) ? n : null;
 };
 const isPrefixMark = (v: string) => v.trim().startsWith("^");
+const escapeLike = (s: string) => s.replace(/[\\%_]/g, (m) => "\\" + m);
+const TX_SELECT = `id, txn_date, amount, direction, wallet_id, merchant_name, description,
+             categories:category_id ( major_category, minor_category )`;
 const catOf = (t: Tx): CatRef | null => (Array.isArray(t.categories) ? t.categories[0] ?? null : t.categories);
 
 export default function KidsReportPage() {
@@ -119,6 +126,7 @@ export default function KidsReportPage() {
   const [rules, setRules] = useState<Rule[]>([]);
   const [valuations, setValuations] = useState<Valuation[]>([]);
   const [txs, setTxs] = useState<Tx[]>([]);
+  const [hhTxs, setHhTxs] = useState<Tx[]>([]); // 家計共通の財布の取引のうち、キーワードに合うもの
   const [loading, setLoading] = useState(false);
 
   const [walletId, setWalletId] = useState("");
@@ -134,6 +142,8 @@ export default function KidsReportPage() {
   const [ruleMinor, setRuleMinor] = useState("");
   const [ruleItem, setRuleItem] = useState("");
   const [ruleOrder, setRuleOrder] = useState("0");
+  const [ruleSource, setRuleSource] = useState<"wallet" | "household">("wallet");
+  const [ruleInclude, setRuleInclude] = useState(true);
 
   // 評価額のフォーム
   const [valId, setValId] = useState("");
@@ -221,10 +231,7 @@ export default function KidsReportPage() {
       for (;;) {
         const { data, error } = await supabase
           .from("transaction_records")
-          .select(
-            `id, txn_date, amount, direction, wallet_id, merchant_name, description,
-             categories:category_id ( major_category, minor_category )`
-          )
+          .select(TX_SELECT)
           .eq("wallet_id", walletId)
           .order("txn_date", { ascending: true })
           .order("id", { ascending: true })
@@ -245,13 +252,73 @@ export default function KidsReportPage() {
   }, [allowed, walletId]);
 
   // ---------------- 集計 ----------------
-  const walletRules = useMemo(
+  const allWalletRules = useMemo(
     () =>
       rules
         .filter((r) => r.wallet_id === walletId)
         .sort((a, b) => a.display_order - b.display_order),
     [rules, walletId]
   );
+  // この財布の取引を振り分けるルール
+  const walletRules = useMemo(
+    () => allWalletRules.filter((r) => r.source !== "household"),
+    [allWalletRules]
+  );
+  // 家計共通の財布の取引を、メモの前方一致キーワードで拾うルール
+  const householdRules = useMemo(
+    () => allWalletRules.filter((r) => r.source === "household"),
+    [allWalletRules]
+  );
+  const householdKeywordsKey = useMemo(
+    () =>
+      Array.from(new Set(householdRules.map((r) => r.keyword.trim()).filter(Boolean)))
+        .sort()
+        .join("\u0001"),
+    [householdRules]
+  );
+
+  // 家計共通の財布の取引（キーワードに合うものだけ）を読み込む
+  useEffect(() => {
+    if (!allowed || !walletId) return;
+    const kws = householdKeywordsKey ? householdKeywordsKey.split("\u0001") : [];
+    if (kws.length === 0 || wallets.length === 0) {
+      setHhTxs([]);
+      return;
+    }
+    let cancelled = false;
+    const childIds = wallets.map((w) => w.id);
+    const loadHh = async () => {
+      const byId = new Map<string, Tx>();
+      for (const kw of kws) {
+        let offset = 0;
+        for (;;) {
+          const { data, error } = await supabase
+            .from("transaction_records")
+            .select(TX_SELECT)
+            .or(`wallet_id.is.null,wallet_id.not.in.(${childIds.join(",")})`)
+            .ilike("description", `${escapeLike(kw)}%`)
+            .order("txn_date", { ascending: true })
+            .order("id", { ascending: true })
+            .range(offset, offset + 999);
+          if (error) {
+            setMessage("家計共通の取引の読込エラー: " + error.message);
+            break;
+          }
+          const rows = (data as unknown as Tx[]) || [];
+          rows.forEach((r) => byId.set(r.id, r));
+          if (rows.length < 1000) break;
+          offset += 1000;
+        }
+      }
+      if (!cancelled) {
+        setHhTxs(Array.from(byId.values()).sort((a, b) => a.txn_date.localeCompare(b.txn_date)));
+      }
+    };
+    void loadHh();
+    return () => {
+      cancelled = true;
+    };
+  }, [allowed, walletId, householdKeywordsKey, wallets]);
 
   const monthValuations = useMemo(
     () => valuations.filter((v) => v.wallet_id === walletId && v.as_of_month === month),
@@ -278,24 +345,34 @@ export default function KidsReportPage() {
     return Array.from(set).sort((a, b) => a.localeCompare(b, "ja"));
   }, [txs]);
 
-  const firstTxDate = txs.length > 0 ? txs[0].txn_date : "";
+  const firstTxDate = [txs[0]?.txn_date, hhTxs[0]?.txn_date]
+    .filter((d): d is string => !!d)
+    .sort()[0] ?? "";
   const effectiveStart = startDate || firstTxDate;
   const endDate = `${month}-31`;
 
   const report = useMemo(() => {
     const map = new Map<string, ReportRow>();
+    const refMap = new Map<string, ReportRow>(); // 家計共通で「残高に含めない」項目（参考表示）
     const unmatchedMap = new Map<string, Unmatched>();
-    const get = (minor: string, item: string, order: number) => {
-      const key = `${minor}\u0000${item}`;
-      let row = map.get(key);
+    const getFrom = (
+      target: Map<string, ReportRow>,
+      minor: string,
+      item: string,
+      order: number,
+      household: boolean
+    ) => {
+      const key = `${minor}\u0000${item}\u0000${household ? "hh" : ""}`;
+      let row = target.get(key);
       if (!row) {
-        row = { minor, item, income: 0, expense: 0, valued: false, order };
-        map.set(key, row);
+        row = { minor, item, income: 0, expense: 0, valued: false, order, household };
+        target.set(key, row);
       } else if (order < row.order) {
         row.order = order;
       }
       return row;
     };
+    const get = (minor: string, item: string, order: number) => getFrom(map, minor, item, order, false);
 
     txs.forEach((t) => {
       if (t.direction !== "income" && t.direction !== "expense") return;
@@ -336,6 +413,26 @@ export default function KidsReportPage() {
       else row.expense += amount;
     });
 
+    // 家計共通の財布から出した分：メモの最初がキーワードに一致する取引だけを、ルールの項目に集計する
+    hhTxs.forEach((t) => {
+      if (t.direction !== "income" && t.direction !== "expense") return;
+      if (effectiveStart && t.txn_date < effectiveStart) return;
+      if (t.txn_date > endDate) return;
+      const minor = catOf(t)?.minor_category || "(中分類なし)";
+      const memo = norm(t.description);
+      const rule = householdRules.find((r) => {
+        if (r.minor_category && r.minor_category !== minor) return false;
+        const k = norm(r.keyword);
+        return k !== "" && memo.startsWith(k);
+      });
+      if (!rule) return;
+      const include = rule.include_in_balance !== false;
+      const row = getFrom(include ? map : refMap, minor, rule.item_name, rule.display_order, true);
+      const amount = Number(t.amount || 0);
+      if (t.direction === "income") row.income += amount;
+      else row.expense += amount;
+    });
+
     // 評価額（塗潰しセル）は収入側に加える
     monthValuations.forEach((v) => {
       const row = get(v.minor_category, v.item_name, v.display_order);
@@ -343,19 +440,33 @@ export default function KidsReportPage() {
       row.valued = true;
     });
 
-    const rows = Array.from(map.values()).sort(
-      (a, b) =>
-        a.order - b.order ||
-        a.minor.localeCompare(b.minor, "ja") ||
-        a.item.localeCompare(b.item, "ja")
-    );
+    const sortRows = (m: Map<string, ReportRow>) =>
+      Array.from(m.values()).sort(
+        (a, b) =>
+          a.order - b.order ||
+          a.minor.localeCompare(b.minor, "ja") ||
+          a.item.localeCompare(b.item, "ja")
+      );
+    const rows = sortRows(map);
+    const refRows = sortRows(refMap);
+    const refIncome = refRows.reduce((s, r) => s + r.income, 0);
+    const refExpense = refRows.reduce((s, r) => s + r.expense, 0);
     const incomeTotal = rows.reduce((s, r) => s + r.income, 0);
     const expenseTotal = rows.reduce((s, r) => s + r.expense, 0);
     const unmatched = Array.from(unmatchedMap.values())
       .sort((a, b) => b.total - a.total)
       .slice(0, 30);
-    return { rows, incomeTotal, expenseTotal, balance: incomeTotal - expenseTotal, unmatched };
-  }, [txs, walletRules, monthValuations, catOrder, effectiveStart, endDate]);
+    return {
+      rows,
+      refRows,
+      refIncome,
+      refExpense,
+      incomeTotal,
+      expenseTotal,
+      balance: incomeTotal - expenseTotal,
+      unmatched,
+    };
+  }, [txs, hhTxs, walletRules, householdRules, monthValuations, catOrder, effectiveStart, endDate]);
 
   // ---------------- ルールの登録・編集 ----------------
   const resetRuleForm = () => {
@@ -365,6 +476,8 @@ export default function KidsReportPage() {
     setRuleMinor("");
     setRuleItem("");
     setRuleOrder("0");
+    setRuleSource("wallet");
+    setRuleInclude(true);
   };
 
   const saveRule = async () => {
@@ -377,10 +490,12 @@ export default function KidsReportPage() {
     const payload = {
       wallet_id: walletId,
       keyword: ruleKeyword.trim(),
-      match_type: ruleMatch,
+      match_type: ruleSource === "household" ? "prefix" : ruleMatch,
       minor_category: ruleMinor || null,
       item_name: ruleItem.trim(),
       display_order: toNum(ruleOrder) ?? 0,
+      source: ruleSource,
+      include_in_balance: ruleSource === "household" ? ruleInclude : true,
     };
     const { error } = ruleId
       ? await supabase.from("kids_report_rules").update(payload).eq("id", ruleId)
@@ -400,6 +515,8 @@ export default function KidsReportPage() {
     setRuleMinor(r.minor_category || "");
     setRuleItem(r.item_name);
     setRuleOrder(String(r.display_order));
+    setRuleSource(r.source === "household" ? "household" : "wallet");
+    setRuleInclude(r.include_in_balance !== false);
   };
 
   // 「ルールにする」：当てはまらなかったメモを、ルールの入力欄に入れる
@@ -410,6 +527,8 @@ export default function KidsReportPage() {
     setRuleMinor(u.minor);
     setRuleItem("");
     setRuleOrder("0");
+    setRuleSource("wallet");
+    setRuleInclude(true);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -735,9 +854,14 @@ export default function KidsReportPage() {
               </thead>
               <tbody>
                 {report.rows.map((r) => (
-                  <tr key={`${r.minor}\u0000${r.item}`}>
+                  <tr key={`${r.minor}\u0000${r.item}\u0000${r.household ? "hh" : ""}`}>
                     <td style={tdStyle}>{r.minor}</td>
-                    <td style={tdStyle}>{r.item}</td>
+                    <td style={tdStyle}>
+                      {r.item}
+                      {r.household && (
+                        <span style={{ fontSize: 11, color: "#94a3b8", marginLeft: 6 }}>（家計共通）</span>
+                      )}
+                    </td>
                     <td
                       style={{
                         ...tdStyle,
@@ -766,7 +890,52 @@ export default function KidsReportPage() {
             {effectiveStart ? `${effectiveStart} から ` : ""}
             {month} の月末までの累計です。灰色のセルは評価額（残量×参考売価）の概算で、実際の取引ではありません。
             概算残高 ＝ 収入合計 − 支出合計。資金移動は含みません。
+            「（家計共通）」は、家計共通の財布から出した分で、メモの最初がキーワードに一致した取引です。
           </div>
+
+          {report.refRows.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                参考：家計共通の財布から出した分（概算残高に含めない）
+              </div>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ borderCollapse: "collapse", minWidth: 560, width: "100%", fontSize: 14 }}>
+                  <thead>
+                    <tr>
+                      <th style={thStyle}>中分類</th>
+                      <th style={thStyle}>項目</th>
+                      <th style={thStyle}>収入</th>
+                      <th style={thStyle}>支出</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {report.refRows.map((r) => (
+                      <tr key={`ref\u0000${r.minor}\u0000${r.item}`}>
+                        <td style={tdStyle}>{r.minor}</td>
+                        <td style={tdStyle}>{r.item}</td>
+                        <td style={{ ...tdStyle, textAlign: "right", ...(r.income === 0 ? slash : {}) }}>
+                          {r.income !== 0 ? yen(r.income) : ""}
+                        </td>
+                        <td style={{ ...tdStyle, textAlign: "right", ...(r.expense === 0 ? slash : {}) }}>
+                          {r.expense !== 0 ? yen(r.expense) : ""}
+                        </td>
+                      </tr>
+                    ))}
+                    <tr style={{ fontWeight: "bold" }}>
+                      <td style={tdStyle} colSpan={2}>
+                        参考合計
+                      </td>
+                      <td style={{ ...tdStyle, textAlign: "right" }}>{yen(report.refIncome)}</td>
+                      <td style={{ ...tdStyle, textAlign: "right" }}>{yen(report.refExpense)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 8 }}>
+                上の表の合計・概算残高には入っていません。
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -788,20 +957,52 @@ export default function KidsReportPage() {
                   表示順の小さいルールから順に判定し、最初に当てはまったものを使います。どれにも当てはまらない取引は、中分類名がそのまま項目名になります。
                 </div>
                 <div>
-                  <div style={labelStyle}>キーワード</div>
-                  <input style={inputStyle} value={ruleKeyword} onChange={(e) => setRuleKeyword(e.target.value)} placeholder="例: 保有_JP_" />
-                </div>
-                <div>
-                  <div style={labelStyle}>一致のしかた</div>
+                  <div style={labelStyle}>対象の取引</div>
                   <select
                     style={inputStyle}
-                    value={ruleMatch}
-                    onChange={(e) => setRuleMatch(e.target.value as "prefix" | "contains")}
+                    value={ruleSource}
+                    onChange={(e) => setRuleSource(e.target.value as "wallet" | "household")}
                   >
-                    <option value="prefix">メモの最初が一致（例: 保有_JP_）</option>
-                    <option value="contains">メモ・支払先に含む</option>
+                    <option value="wallet">この財布の取引</option>
+                    <option value="household">家計共通の財布の取引（かのん用キーワード）</option>
                   </select>
+                  {ruleSource === "household" && (
+                    <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 4 }}>
+                      家計共通の財布から出した取引のうち、メモの最初がキーワードと一致するものだけを、この財布のレポートに集計します（例: かのん_教育_）。
+                    </div>
+                  )}
                 </div>
+                <div>
+                  <div style={labelStyle}>キーワード</div>
+                  <input
+                    style={inputStyle}
+                    value={ruleKeyword}
+                    onChange={(e) => setRuleKeyword(e.target.value)}
+                    placeholder={ruleSource === "household" ? "例: かのん_教育_" : "例: 保有_JP_"}
+                  />
+                </div>
+                {ruleSource === "wallet" ? (
+                  <div>
+                    <div style={labelStyle}>一致のしかた</div>
+                    <select
+                      style={inputStyle}
+                      value={ruleMatch}
+                      onChange={(e) => setRuleMatch(e.target.value as "prefix" | "contains")}
+                    >
+                      <option value="prefix">メモの最初が一致（例: 保有_JP_）</option>
+                      <option value="contains">メモ・支払先に含む</option>
+                    </select>
+                  </div>
+                ) : (
+                  <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 14 }}>
+                    <input
+                      type="checkbox"
+                      checked={ruleInclude}
+                      onChange={(e) => setRuleInclude(e.target.checked)}
+                    />
+                    概算残高に含める（外すと、別枠で参考表示）
+                  </label>
+                )}
                 <div>
                   <div style={labelStyle}>中分類で限定（任意）</div>
                   <select style={inputStyle} value={ruleMinor} onChange={(e) => setRuleMinor(e.target.value)}>
@@ -836,7 +1037,7 @@ export default function KidsReportPage() {
               <div style={{ ...cardStyle, display: "grid", gap: 8 }}>
                 <div style={{ fontWeight: 600 }}>まとめて追加</div>
                 <div style={{ fontSize: 12, color: "#94a3b8" }}>
-                  1行に「キーワード,項目名」または「キーワード,項目名,中分類」を書きます。キーワードの先頭に ^ を付けると「メモの最初が一致」、付けないと「メモ・支払先に含む」になります。行の順に表示順が付きます。
+                  1行に「キーワード,項目名」または「キーワード,項目名,中分類」を書きます。キーワードの先頭に ^ を付けると「メモの最初が一致」、付けないと「メモ・支払先に含む」になります。行の順に表示順が付きます。（まとめて追加は「この財布の取引」用です。家計共通のキーワードは上のフォームから1件ずつ登録します。）
                 </div>
                 <textarea
                   style={{ ...inputStyle, minHeight: 110, fontFamily: "inherit" }}
@@ -854,16 +1055,22 @@ export default function KidsReportPage() {
           )}
 
           <div style={{ fontWeight: 600, margin: "8px 0" }}>登録済みのルール</div>
-          {walletRules.length === 0 && <div>この財布のルールはまだありません。</div>}
-          {walletRules.map((r) => (
+          {allWalletRules.length === 0 && <div>この財布のルールはまだありません。</div>}
+          {allWalletRules.map((r) => (
             <div key={r.id} style={{ ...cardStyle, display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
               <div style={{ fontSize: 14 }}>
                 <div>
+                  {r.source === "household" && (
+                    <span style={{ fontSize: 11, color: "#fde68a", marginRight: 6 }}>［家計共通］</span>
+                  )}
                   {r.match_type === "prefix" ? "メモの最初が" : "メモ・支払先に"}「{r.keyword}」
                   {r.match_type === "prefix" ? "" : "を含む"}
                   {r.minor_category ? `（${r.minor_category}のみ）` : ""} → <b>{r.item_name}</b>
                 </div>
-                <div style={{ fontSize: 12, color: "#94a3b8" }}>表示順 {r.display_order}</div>
+                <div style={{ fontSize: 12, color: "#94a3b8" }}>
+                  表示順 {r.display_order}
+                  {r.source === "household" ? (r.include_in_balance === false ? "　残高に含めない" : "　残高に含める") : ""}
+                </div>
               </div>
               {isAdmin && (
                 <div style={{ display: "flex", gap: 6 }}>
