@@ -120,12 +120,13 @@ export default function CalendarPage() {
       .lt("txn_date", to)
       .order("txn_date", { ascending: true });
 
-    // 財布での絞り込み（初期は家計のみ。子供財布の取引は選んだときだけ表示）
+    // 財布での絞り込み（初期は家計のみ。子供財布の取引は選んだときだけ表示。ただし取り込み対象のキーワードに合うものは家計に含む）
     const childIds = wallets.filter(isChildWallet).map((w) => w.id);
     if (walletFilter === WALLET_HOUSEHOLD) {
       if (childIds.length > 0) {
+      // 家計 = 家計共通の財布 + かのんの財布のうち「家計に取り込む」キーワードに合う取引
       query = query.or(
-        `wallet_id.is.null,wallet_id.not.in.(${childIds.join(",")})`
+        `wallet_id.is.null,wallet_id.not.in.(${childIds.join(",")}),include_in_household.eq.true`
       );
       }
     } else {

@@ -32,6 +32,7 @@ type Row = {
   payment_account_id: string | null;
   receive_account_id: string | null;
   wallet_id: string | null;
+  include_in_household?: boolean | null; // かのん財布の取引のうち、家計に取り込む対象
   categories:
     | { major_category: string; minor_category: string }
     | { major_category: string; minor_category: string }[]
@@ -253,6 +254,7 @@ export default function GraphPage() {
           payment_account_id,
           receive_account_id,
           wallet_id,
+          include_in_household,
           categories:category_id (
             major_category,
             minor_category
@@ -428,7 +430,8 @@ export default function GraphPage() {
       allRows.filter((r) => {
         const kid = !!(r.wallet_id && kidsWalletNames[r.wallet_id]);
         if (walletScope === "all") return true;
-        return walletScope === "kids" ? kid : !kid;
+        // 家計＝家計共通の財布＋かのん財布のうち取り込み対象（include_in_household）。子供＝かのん財布の全取引
+        return walletScope === "kids" ? kid : !kid || !!r.include_in_household;
       }),
     [allRows, kidsWalletNames, walletScope]
   );

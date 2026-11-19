@@ -19,7 +19,6 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import ReceiptScreen from "./ReceiptScreen";
-import KidsKeywordBulk from "./KidsKeywordBulk";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
@@ -545,7 +544,7 @@ export default function Page() {
     if (listWalletId === "household") {
       if (childWalletIds.length > 0) {
         query = query.or(
-          `wallet_id.is.null,wallet_id.not.in.(${childWalletIds.join(",")})`
+          `wallet_id.is.null,wallet_id.not.in.(${childWalletIds.join(",")}),include_in_household.eq.true`
         );
       }
     } else if (listWalletId) {
@@ -1275,7 +1274,7 @@ export default function Page() {
       if (csvWalletId === "household") {
         if (childWalletIds.length > 0) {
           query = query.or(
-            `wallet_id.is.null,wallet_id.not.in.(${childWalletIds.join(",")})`
+            `wallet_id.is.null,wallet_id.not.in.(${childWalletIds.join(",")}),include_in_household.eq.true`
           );
         }
       } else if (csvWalletId) {
@@ -3008,13 +3007,6 @@ export default function Page() {
             onEdit={startEditMerchantMaster}
             onDelete={(id, name) => deleteMerchantMaster(id, name)}
             onReorder={reorderMerchantMasters}
-          />
-
-          <KidsKeywordBulk
-            supabase={supabase}
-            wallets={wallets}
-            categories={categories}
-            onChanged={loadTransactions}
           />
 
           <div>{masterMessage}</div>

@@ -670,6 +670,7 @@ ${groups}
 }
 
 // 子供財布（household以外）のIDを取得。dashboardは家計のみを集計するため、これらを除外する
+// （ただし、かのん財布のうち「家計に取り込む」キーワードに合う取引は include_in_household で家計に含める）
 async function fetchChildWalletIds(): Promise<string[]> {
   const { data } = await supabase.from("wallets").select("id, wallet_type");
   return ((data as { id: string; wallet_type: string | null }[]) ?? [])
@@ -741,7 +742,7 @@ export default function DashboardPage() {
 
     if (childWalletIds.length > 0) {
       query = query.or(
-        `wallet_id.is.null,wallet_id.not.in.(${childWalletIds.join(",")})`
+        `wallet_id.is.null,wallet_id.not.in.(${childWalletIds.join(",")}),include_in_household.eq.true`
       );
     }
 
@@ -881,7 +882,7 @@ ${month}
 
       if (childWalletIds.length > 0) {
         query = query.or(
-          `wallet_id.is.null,wallet_id.not.in.(${childWalletIds.join(",")})`
+          `wallet_id.is.null,wallet_id.not.in.(${childWalletIds.join(",")}),include_in_household.eq.true`
         );
       }
 
