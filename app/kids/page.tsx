@@ -18,9 +18,7 @@ type Tx = {
   wallet_id: string | null; category_id: string | null;
   merchant_name: string | null; description: string | null;
   categories?: { major_category: string; minor_category: string } | null;
-  include_in_household?: boolean | null; // 家計に取り込む対象（メモのキーワードに一致）
 };
-type HhKeyword = { id: string; wallet_id: string | null; keyword: string };
 
 const inputStyle: React.CSSProperties = {
   width: "100%", padding: "10px", borderRadius: 8, border: "1px solid #475569",
@@ -48,12 +46,7 @@ export default function KidsPage() {
   const [transactions, setTransactions] = useState<Tx[]>([]);
   const [walletId, setWalletId] = useState("");
   const [month, setMonth] = useState(today().slice(0,7));
-  const [mode, setMode] = useState<"input"|"list"|"hh">("input");
-  // 家計に取り込むキーワード（メモの最初が一致した取引を、家計のグラフ・ダッシュボード等に含める）
-  const [hhKeywords, setHhKeywords] = useState<HhKeyword[]>([]);
-  const [newKeyword, setNewKeyword] = useState("");
-  const [newKeywordScope, setNewKeywordScope] = useState<"wallet"|"all">("wallet");
-  const [hhCount, setHhCount] = useState<number | null>(null);
+  const [mode, setMode] = useState<"input"|"list">("input");
   const [direction, setDirection] = useState<"income"|"expense">("income");
   const [date, setDate] = useState(today());
   const [amount, setAmount] = useState("");
@@ -92,16 +85,6 @@ export default function KidsPage() {
     if (!user || !walletId) { setTransactions([]); return; }
     void loadTransactions();
   }, [user, walletId, month]);
-
-  useEffect(() => {
-    if (!user) return;
-    void loadHhKeywords();
-  }, [user]);
-
-  useEffect(() => {
-    if (!user || !walletId) { setHhCount(null); return; }
-    void loadHhCount();
-  }, [user, walletId, hhKeywords]);
 
   const childWallets = useMemo(
     // 家計共通財布（wallet_type = household）は子供画面に表示しない
@@ -172,54 +155,13 @@ export default function KidsPage() {
     const [y,m] = month.split("-").map(Number);
     const to = `${m === 12 ? y+1 : y}-${String(m === 12 ? 1 : m+1).padStart(2,"0")}-01`;
     const { data, error } = await supabase.from("transaction_records").select(`
-      id,txn_date,amount,direction,wallet_id,category_id,merchant_name,description,include_in_household,
+      id,txn_date,amount,direction,wallet_id,category_id,merchant_name,description,
       categories:category_id(major_category,minor_category)
     `).eq("wallet_id", walletId).gte("txn_date", from).lt("txn_date", to)
       .order("txn_date", { ascending: false }).order("created_at", { ascending: false }).limit(500);
     if (error) setMessage(`明細読込エラー: ${error.message}`);
     else setTransactions((data || []) as unknown as Tx[]);
     setLoading(false);
-  }
-
-  async function loadHhKeywords() {
-    const { data, error } = await supabase.from("kids_household_keywords")
-      .select("id,wallet_id,keyword").order("created_at");
-    if (error) { setMessage(`キーワードの読込エラー: ${error.message}`); return; }
-    setHhKeywords((data || []) as HhKeyword[]);
-  }
-
-  // 選んだ財布の取引のうち、家計に取り込まれている件数（全期間）
-  async function loadHhCount() {
-    const { count, error } = await supabase.from("transaction_records")
-      .select("id", { count: "exact", head: true })
-      .eq("wallet_id", walletId).eq("include_in_household", true);
-    setHhCount(error ? null : (count ?? 0));
-  }
-
-  async function addKeyword() {
-    setMessage("");
-    const kw = newKeyword.trim();
-    if (!user) return;
-    if (!kw) { setMessage("キーワードを入力してください"); return; }
-    if (newKeywordScope === "wallet" && !walletId) { setMessage("財布を選んでください"); return; }
-    const { error } = await supabase.from("kids_household_keywords").insert({
-      user_id: user.id,
-      wallet_id: newKeywordScope === "wallet" ? walletId : null,
-      keyword: kw
-    });
-    if (error) { setMessage(`キーワードの登録エラー: ${error.message}`); return; }
-    setNewKeyword("");
-    setMessage("登録しました。該当する取引は家計の集計に含まれます");
-    await loadHhKeywords();
-    await loadTransactions();
-  }
-
-  async function deleteKeyword(k: HhKeyword) {
-    if (!window.confirm(`「${k.keyword}」を削除しますか？\n該当していた取引は家計の集計から外れます（取引自体は消えません）。`)) return;
-    const { error } = await supabase.from("kids_household_keywords").delete().eq("id", k.id);
-    if (error) { setMessage(`削除エラー: ${error.message}`); return; }
-    await loadHhKeywords();
-    await loadTransactions();
   }
 
   async function signIn() {
@@ -313,41 +255,11 @@ export default function KidsPage() {
       <nav style={{display:"flex",gap:8,margin:"16px 0"}}>
         <button style={{...buttonStyle,background:mode==="input"?"#2563eb":"#334155"}} onClick={()=>setMode("input")}>入力</button>
         <button style={{...buttonStyle,background:mode==="list"?"#2563eb":"#334155"}} onClick={()=>setMode("list")}>明細・修正</button>
-        <button style={{...buttonStyle,background:mode==="hh"?"#2563eb":"#334155"}} onClick={()=>setMode("hh")}>家計に取り込む</button>
       </nav>
 
       {message && <p style={{background:"#334155",padding:10,borderRadius:8}}>{message}</p>}
 
-      {mode==="hh" ? (
-        <section style={{display:"grid",gap:12,background:"#1e293b",padding:14,borderRadius:12}}>
-          <h2 style={{fontSize:18,fontWeight:700,margin:0}}>家計に取り込むキーワード</h2>
-          <div style={{fontSize:13,color:"#cbd5e1"}}>
-            この財布の取引のうち、メモの最初がキーワードと一致するものを、家計のダッシュボード・集計・グラフ・カレンダー・メイン画面の一覧に含めます（費目はこの財布の中分類のまま表示）。財布は変わらず、この画面では今まで通りすべて表示されます。例: 家計_教育_
-          </div>
-          <label>キーワード<input style={inputStyle} value={newKeyword} onChange={e=>setNewKeyword(e.target.value)} placeholder="例: 家計_教育_"/></label>
-          <label>対象の財布<select style={inputStyle} value={newKeywordScope} onChange={e=>setNewKeywordScope(e.target.value as "wallet"|"all")}>
-            <option value="wallet">選択中の財布{selectedWallet ? `（${selectedWallet.wallet_name}）` : ""}だけ</option>
-            <option value="all">すべての子供財布</option>
-          </select></label>
-          <button style={buttonStyle} onClick={addKeyword}>キーワードを登録</button>
-
-          <div style={{fontWeight:600,marginTop:8}}>登録済みのキーワード</div>
-          {hhKeywords.length===0 && <div style={{color:"#94a3b8"}}>まだありません。</div>}
-          {hhKeywords.map(k=>{
-            const w = k.wallet_id ? childWallets.find(x=>x.id===k.wallet_id) : null;
-            return <div key={k.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,background:"#0f172a",borderRadius:8,padding:10}}>
-              <div style={{overflowWrap:"anywhere"}}>
-                メモの最初が「{k.keyword}」
-                <div style={{fontSize:12,color:"#94a3b8"}}>{k.wallet_id ? (w?.wallet_name || "財布") : "すべての子供財布"}</div>
-              </div>
-              <button style={{...buttonStyle,padding:"6px 8px",background:"#b91c1c"}} onClick={()=>deleteKeyword(k)}>削除</button>
-            </div>;
-          })}
-          <div style={{fontSize:13,color:"#cbd5e1"}}>
-            選択中の財布で、現在家計に取り込まれている取引: {hhCount===null ? "—" : `${hhCount}件`}（全期間）
-          </div>
-        </section>
-      ) : mode==="input" ? (
+      {mode==="input" ? (
         <section style={{display:"grid",gap:12,background:"#1e293b",padding:14,borderRadius:12}}>
           <div style={{display:"flex",gap:8}}>
             <button style={{...buttonStyle,flex:1,background:direction==="income"?"#15803d":"#334155"}} onClick={()=>{setDirection("income");setCategoryId("");}}>収入</button>
@@ -377,7 +289,7 @@ export default function KidsPage() {
                   <td style={{padding:10,color:t.direction==="income"?"#86efac":"#fca5a5"}}>{t.direction==="income"?"収入":t.direction==="transfer"?"資金移動":"支出"}</td>
                   <td style={{padding:10,whiteSpace:"nowrap"}}>{yen(Number(t.amount))}</td>
                   <td style={{padding:10}}>{cat?`${cat.major_category} / ${cat.minor_category}`:"—"}</td>
-                  <td style={{padding:10}}>{t.merchant_name||"—"}</td><td style={{padding:10}}>{t.description||"—"}{t.include_in_household && <span style={{marginLeft:6,fontSize:11,color:"#fde68a",whiteSpace:"nowrap"}}>［家計に含む］</span>}</td>
+                  <td style={{padding:10}}>{t.merchant_name||"—"}</td><td style={{padding:10}}>{t.description||"—"}</td>
                   <td style={{padding:10,whiteSpace:"nowrap"}}>
                     <button style={{...buttonStyle,padding:"6px 8px",marginRight:6}} onClick={()=>startEdit(t)}>修正</button>
                     <button style={{...buttonStyle,padding:"6px 8px",background:"#b91c1c"}} onClick={()=>deleteEntry(t.id)}>削除</button>
